@@ -1,0 +1,29 @@
+<launch>
+  <!-- Improved Grasp Planning Pipeline V2 -->
+  <!-- Features: Cartesian motion, multiple candidates, fail recovery, table collision -->
+
+  <!-- Load grasp parameters -->
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/grasp_params.yaml" />
+  
+  <!-- Load planning parameters -->
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/planning_params.yaml" />
+
+  <!-- Grasp Pipeline Node V2 (improved with Cartesian + fail recovery) -->
+  <node 
+    name="grasp_pipeline_node_v2" 
+    pkg="panda_grasp_planning" 
+    type="grasp_pipeline_node_v2.py" 
+    output="screen"
+    required="true">
+    <param name="use_gripper" value="false" />  <!-- Set to true for real robot -->
+  </node>
+
+  <node 
+    name="rqt_console" 
+    pkg="rqt_console" 
+    type="rqt_console" 
+    output="screen"
+    launch-prefix="bash -c 'sleep 2; $0 $@' "
+    required="false" />
+
+</launch>

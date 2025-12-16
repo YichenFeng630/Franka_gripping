@@ -1,29 +1,38 @@
-# Grasp Parameters Configuration
-# Defines grasp pose generation rules for Phase 2
+# Grasp Parameters V3
+# All heights are relative offsets unless otherwise specified
 
 grasp:
-  # Height offsets (in meters, relative to cube center)
-  pre_grasp_offset_z: 0.10  # Pre-grasp: 10cm above cube
-  grasp_offset_z: 0.02      # Grasp: 2cm above cube top surface
-  lift_offset_z: 0.15       # Lift: 15cm above grasp pose
+  # Height offsets (relative to grasp point)
+  pre_grasp_offset_z: 0.15        # Distance above grasp point for approach
+  grasp_offset_z: 0.02            # Offset from cube center to grasp contact
+  lift_offset_z: 0.15             # Distance above grasp after grasping
+  retreat_offset_z: 0.20          # Safe height before returning home
   
   # Gripper orientation (Roll-Pitch-Yaw in radians)
-  # Default: gripper pointing down (z-axis downward)
   gripper_orientation:
-    roll: 3.14159   # π radians (180 degrees)
+    roll: 3.14159   # π (gripper pointing down)
     pitch: 0.0
     yaw: 0.0
   
-  # Approach and retreat parameters
-  approach:
-    direction: [0, 0, -1]  # Approach from above (negative Z)
-    min_distance: 0.05     # Minimum approach distance (meters)
-    max_distance: 0.15     # Maximum approach distance (meters)
+  # Grasp candidates: yaw angles (radians)
+  candidates:
+    enable: true
+    yaw_angles: [0.0, 1.5708, 3.14159, 4.71239]  # 0°, 90°, 180°, 270°
+    # Approach directions: [[x_offset, y_offset], ...]
+    # Top approach + 4 side approaches
+    approach_directions: [
+      [0.0, 0.0],      # From top (straight down)
+      [0.1, 0.0],      # From +X side
+      [-0.1, 0.0],     # From -X side
+      [0.0, 0.1]       # From +Y side
+    ]
+    max_candidates: 8
   
-  retreat:
-    direction: [0, 0, 1]   # Retreat upward (positive Z)
-    min_distance: 0.10     # Minimum retreat distance (meters)
-    max_distance: 0.20     # Maximum retreat distance (meters)
+  # Cartesian path parameters
+  cartesian:
+    step_size: 0.005              # 5mm resolution
+    jump_threshold: 0.0           # No joint space jumps
+    min_fraction: 0.95            # 95% completeness required
 
 # Gripper control parameters
 gripper:
@@ -45,8 +54,29 @@ timing:
   wait_after_execute: 1.0   # Wait after execution (seconds)
   gripper_close_delay: 0.5  # Wait before closing gripper (seconds)
   
-# Failure handling
+# Failure handling and retry logic
 failure_handling:
-  max_retries: 3            # Maximum retry attempts per stage
+  max_planning_retries: 3        # Retries per stage: (1) time, (2) tolerance, (3) planner
+  max_candidate_retries: 8       # Maximum number of candidate attempts
+  step_downsample_factor: 2      # Reduce step size by this factor in fallback
+  distance_scale: 0.8            # Scale approach distance in fallback (0-1)
+  fallback_planner: "RRTstar"    # Fallback if RRTConnect fails
+
+# Environment constraints
+environment:
+  table_height: 0.0              # Table surface in base frame (meters)
+  safety_margin_z: 0.08          # Minimum height above table (meters)
+  cube_half_size: 0.015          # Half size of cube for normalization
+  enable_table_collision: true   # Add table as collision object
+  table_dimensions:
+    x: 1.0
+    y: 1.0
+    thickness: 0.05
+
+# Target pose interface specification
+interface:
+  target_cube_pose_frame: panda_link0
+  target_semantic: "cube_center"  # /target_cube_pose is always cube center
+  normalization: "internal"       # Z clamping done internally, not required upstream
   retry_delay: 1.0          # Delay between retries (seconds)
   backoff_multiplier: 1.5   # Increase delay by this factor each retry
