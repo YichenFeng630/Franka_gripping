@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 
+    Complete Grasp Planning Pipeline Launch File
+    Launches all components for autonomous grasping.
+    
+    This includes:
+    - Grasp pose generator (generates pre-grasp, grasp, lift poses)
+    - Grasp pipeline executor (state machine for execution)
+    
+    Prerequisites:
+    - Gazebo and MoveIt must be running:
+      roslaunch franka_zed_gazebo moveit_gazebo_panda.launch
+    
+    Usage:
+      roslaunch panda_grasp_planning grasp_planning_pipeline.launch
+      
+      Then publish target pose:
+      rostopic pub /target_cube_pose geometry_msgs/PoseStamped 
+        "header: {frame_id: 'panda_link0'}
+         pose: {position: {x: 0.5, y: 0.0, z: 0.05}}"
+  -->
+
+  <!-- Arguments -->
+  <arg name="debug" default="false" doc="Enable debug mode with RViz and verbose logging" />
+  <arg name="output" default="screen" />
+  <arg name="use_gripper" default="false" doc="Enable real gripper control (false for Gazebo simulation)" />
+  <arg name="auto_execute" default="true" doc="Automatically execute grasp sequence when poses are received" />
+  <arg name="rviz" default="false" doc="Launch RViz for visualization" />
+  
+  <!-- Load configuration parameters -->
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/grasp_params.yaml" />
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/planning_params.yaml" />
+
+  <!-- Grasp Pose Generator Node -->
+  <node name="grasp_pose_generator" 
+        pkg="panda_grasp_planning" 
+        type="grasp_pose_generator_node.py" 
+        output="$(arg output)"
+        respawn="false">
+    <param name="debug" value="$(arg debug)" />
+  </node>
+
+  <!-- Grasp Pipeline Executor Node -->
+  <node name="grasp_pipeline" 
+        pkg="panda_grasp_planning" 
+        type="grasp_pipeline_node.py" 
+        output="$(arg output)"
+        respawn="false">
+    <param name="use_gripper" value="$(arg use_gripper)" />
+    <param name="auto_execute" value="$(arg auto_execute)" />
+    <param name="debug" value="$(arg debug)" />
+  </node>
+
+  <!-- Optional: RViz for visualization -->
+  <node if="$(arg rviz)" 
+        name="rviz_grasp_planning" 
+        pkg="rviz" 
+        type="rviz" 
+        args="-d $(find panda_moveit_config)/launch/moveit.rviz" />
+
+  <!-- Status monitor (when debug is enabled) -->
+  <group if="$(arg debug)">
+    <node name="status_monitor" 
+          pkg="rostopic" 
+          type="rostopic" 
+          args="echo /grasp_planning_status" 
+          output="screen" />
+  </group>
+
+  <!-- Information -->
+  <node name="grasp_pipeline_info" 
+        pkg="rospy_tutorials" 
+        type="talker" 
+        output="screen"
+        if="false">
+    <!-- Placeholder for startup info, disabled by default -->
+  </node>
+
+</launch>

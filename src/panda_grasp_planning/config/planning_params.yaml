@@ -1,0 +1,47 @@
+# Planning Parameters Configuration
+# Used by all planning nodes in panda_grasp_planning package
+
+planning:
+  # Planner selection
+  planner_id: "RRTConnect"  # Options: RRTConnect, RRT, RRTstar, PRM, etc.
+  
+  # Planning time limits
+  planning_time: 10.0  # Maximum time for planning (seconds)
+  num_planning_attempts: 10  # Number of planning attempts before giving up
+  
+  # Execution parameters
+  max_velocity_scaling_factor: 0.5  # Scale maximum joint velocities (0.0 - 1.0)
+  max_acceleration_scaling_factor: 0.5  # Scale maximum joint accelerations (0.0 - 1.0)
+  
+  # Planning group
+  planning_group: "panda_arm"  # MoveIt planning group (7 DOF, no gripper)
+  
+  # Reference frame
+  reference_frame: "panda_link0"  # All planning done in base frame
+  
+  # Goal tolerances
+  goal_joint_tolerance: 0.01  # Joint space goal tolerance (radians)
+  goal_position_tolerance: 0.01  # Position tolerance for Cartesian goals (meters)
+  goal_orientation_tolerance: 0.01  # Orientation tolerance (radians)
+
+# RRTConnect specific parameters (can override defaults in OMPL config)
+rrt_connect:
+  range: 0.0  # Max motion added to tree (0.0 = auto-compute)
+  # Typically auto-computed as: max_joint_range * 0.1
+
+# Advanced options
+advanced:
+  # Collision checking
+  collision_check_resolution: 0.005  # Resolution for collision checking along path
+  
+  # State validation
+  state_validity_check_attempts: 5  # Number of random state checks
+  
+  # Workspace bounds (for sanity checking)
+  workspace_bounds:
+    x_min: 0.1
+    x_max: 0.9
+    y_min: -0.6
+    y_max: 0.6
+    z_min: 0.0
+    z_max: 1.0

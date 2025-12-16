@@ -1,0 +1,52 @@
+# Grasp Parameters Configuration
+# Defines grasp pose generation rules for Phase 2
+
+grasp:
+  # Height offsets (in meters, relative to cube center)
+  pre_grasp_offset_z: 0.10  # Pre-grasp: 10cm above cube
+  grasp_offset_z: 0.02      # Grasp: 2cm above cube top surface
+  lift_offset_z: 0.15       # Lift: 15cm above grasp pose
+  
+  # Gripper orientation (Roll-Pitch-Yaw in radians)
+  # Default: gripper pointing down (z-axis downward)
+  gripper_orientation:
+    roll: 3.14159   # π radians (180 degrees)
+    pitch: 0.0
+    yaw: 0.0
+  
+  # Approach and retreat parameters
+  approach:
+    direction: [0, 0, -1]  # Approach from above (negative Z)
+    min_distance: 0.05     # Minimum approach distance (meters)
+    max_distance: 0.15     # Maximum approach distance (meters)
+  
+  retreat:
+    direction: [0, 0, 1]   # Retreat upward (positive Z)
+    min_distance: 0.10     # Minimum retreat distance (meters)
+    max_distance: 0.20     # Maximum retreat distance (meters)
+
+# Gripper control parameters
+gripper:
+  # Opening width (meters)
+  open_width: 0.08   # Fully open
+  close_width: 0.02  # Grasp width for small objects
+  
+  # Control parameters
+  max_effort: 50.0   # Maximum gripper force (Newtons)
+  speed: 0.1         # Gripper movement speed (m/s)
+  
+  # Grasp quality parameters
+  epsilon_inner: 0.005  # Inner tolerance for successful grasp
+  epsilon_outer: 0.005  # Outer tolerance for successful grasp
+
+# State machine timing
+timing:
+  wait_after_plan: 0.5      # Wait after planning (seconds)
+  wait_after_execute: 1.0   # Wait after execution (seconds)
+  gripper_close_delay: 0.5  # Wait before closing gripper (seconds)
+  
+# Failure handling
+failure_handling:
+  max_retries: 3            # Maximum retry attempts per stage
+  retry_delay: 1.0          # Delay between retries (seconds)
+  backoff_multiplier: 1.5   # Increase delay by this factor each retry

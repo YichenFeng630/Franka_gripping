@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 
+    Phase 1 Test Launch File
+    Tests basic MoveIt planning from home to fixed pose and back.
+    
+    Prerequisites:
+    - Gazebo and MoveIt must be running:
+      roslaunch franka_zed_gazebo moveit_gazebo_panda.launch
+  -->
+
+  <arg name="debug" default="false" />
+  <arg name="output" default="screen" />
+
+  <!-- Run the Phase 1 test node -->
+    <node name="test_basic_planning" 
+      pkg="panda_grasp_planning" 
+      type="test_basic_planning.py" 
+      output="$(arg output)"
+      respawn="false">
+    
+    <!-- Enable debug logging if requested -->
+    <param name="debug" value="$(arg debug)" />
+  </node>
+
+  <!-- Optional: Open RViz to visualize the planning -->
+  <node if="$(arg debug)" 
+        name="rviz_phase1" 
+        pkg="rviz" 
+        type="rviz" 
+        args="-d $(find panda_moveit_config)/launch/moveit.rviz" />
+
+</launch>
