@@ -1,0 +1,82 @@
+{
+  "version": "V3",
+  "timestamp": "20251218_222138",
+  "statistics": {
+    "total_trials": 5,
+    "successful_trials": 4,
+    "failed_trials": 1,
+    "success_rate": 80.0,
+    "min_time": 9.608578205108643,
+    "max_time": 120.20693755149841,
+    "avg_time": 39.4972204208374,
+    "median_time": 9.609543323516846,
+    "total_duration": 209.50492787361145
+  },
+  "trials": [
+    {
+      "trial_id": 1,
+      "timestamp": "2025-12-18 22:21:50",
+      "target_x": 0.5,
+      "target_y": 0.0,
+      "target_z": 0.1,
+      "target_desc": "\u6b63\u524d\u65b9",
+      "success": true,
+      "final_status": "SUCCESS",
+      "elapsed_time": 9.608578205108643,
+      "status_count": 11,
+      "status_sequence": "GENERATING_CANDIDATES,MOVING_TO_HOME,OPENING_GRIPPER,PLANNING_PRE_GRASP,CARTESIAN_APPROACH,CLOSING_GRIPPER,CARTESIAN_LIFT,RETREAT,MOVING_TO_HOME,SUCCESS,IDLE"
+    },
+    {
+      "trial_id": 2,
+      "timestamp": "2025-12-18 22:22:02",
+      "target_x": 0.45,
+      "target_y": 0.1,
+      "target_z": 0.12,
+      "target_desc": "\u5de6\u524d\u65b9",
+      "success": true,
+      "final_status": "SUCCESS",
+      "elapsed_time": 9.609543323516846,
+      "status_count": 11,
+      "status_sequence": "GENERATING_CANDIDATES,MOVING_TO_HOME,OPENING_GRIPPER,PLANNING_PRE_GRASP,CARTESIAN_APPROACH,CLOSING_GRIPPER,CARTESIAN_LIFT,RETREAT,MOVING_TO_HOME,SUCCESS,IDLE"
+    },
+    {
+      "trial_id": 3,
+      "timestamp": "2025-12-18 22:22:15",
+      "target_x": 0.55,
+      "target_y": -0.05,
+      "target_z": 0.11,
+      "target_desc": "\u53f3\u524d\u65b9",
+      "success": true,
+      "final_status": "SUCCESS",
+      "elapsed_time": 9.609025478363037,
+      "status_count": 11,
+      "status_sequence": "GENERATING_CANDIDATES,MOVING_TO_HOME,OPENING_GRIPPER,PLANNING_PRE_GRASP,CARTESIAN_APPROACH,CLOSING_GRIPPER,CARTESIAN_LIFT,RETREAT,MOVING_TO_HOME,SUCCESS,IDLE"
+    },
+    {
+      "trial_id": 4,
+      "timestamp": "2025-12-18 22:24:18",
+      "target_x": 0.5,
+      "target_y": 0.15,
+      "target_z": 0.09,
+      "target_desc": "\u5de6\u504f",
+      "success": false,
+      "final_status": "TIMEOUT",
+      "elapsed_time": 120.20693755149841,
+      "status_count": 1,
+      "status_sequence": "GENERATING_CANDIDATES"
+    },
+    {
+      "trial_id": 5,
+      "timestamp": "2025-12-18 22:25:09",
+      "target_x": 0.5,
+      "target_y": -0.15,
+      "target_z": 0.13,
+      "target_desc": "\u53f3\u504f",
+      "success": true,
+      "final_status": "SUCCESS",
+      "elapsed_time": 48.45201754570007,
+      "status_count": 12,
+      "status_sequence": "IDLE,GENERATING_CANDIDATES,MOVING_TO_HOME,OPENING_GRIPPER,PLANNING_PRE_GRASP,CARTESIAN_APPROACH,CLOSING_GRIPPER,CARTESIAN_LIFT,RETREAT,MOVING_TO_HOME,SUCCESS,IDLE"
+    }
+  ]
+}

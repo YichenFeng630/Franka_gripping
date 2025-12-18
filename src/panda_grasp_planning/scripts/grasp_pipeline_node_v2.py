@@ -532,7 +532,7 @@ class GraspPipeline:
         (plan, fraction) = self.move_group.compute_cartesian_path(
             waypoints,
             self.cartesian_step_size,
-            self.cartesian_jump_threshold
+            avoid_collisions=True
         )
         
         self.current_trial['cartesian_fractions'].append(fraction)
@@ -593,7 +593,7 @@ class GraspPipeline:
         (plan, fraction) = self.move_group.compute_cartesian_path(
             waypoints,
             self.cartesian_step_size,
-            self.cartesian_jump_threshold
+            avoid_collisions=True
         )
         
         self.current_trial['cartesian_fractions'].append(fraction)
@@ -624,9 +624,10 @@ class GraspPipeline:
         plan = self.move_group.plan()
         plan_time = time.time() - start_time
         
-        # Handle different MoveIt versions
+        # Handle different MoveIt versions (tuple: (success, plan) or RobotTrajectory)
         if isinstance(plan, tuple):
-            success, trajectory, planning_time, error_code = plan
+            success = plan[0]
+            trajectory = plan[1]
         else:
             success = len(plan.joint_trajectory.points) > 0
             trajectory = plan
@@ -659,8 +660,10 @@ class GraspPipeline:
         plan = self.move_group.plan()
         plan_time = time.time() - start_time
         
+        # Handle different MoveIt versions (tuple: (success, plan) or RobotTrajectory)
         if isinstance(plan, tuple):
-            success, trajectory, planning_time, error_code = plan
+            success = plan[0]
+            trajectory = plan[1]
         else:
             success = len(plan.joint_trajectory.points) > 0
             trajectory = plan

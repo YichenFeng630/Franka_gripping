@@ -2,90 +2,74 @@
 
 Franka Panda 机器人自动抓取路径规划，基于 MoveIt + Cartesian 直线运动 + 多候选策略。
 
-## 架构演进
+## 版本选择
 
 | 版本 | 特性 | 推荐场景 |
 |-----|------|---------|
-| V1 | 基础 5 步流程 | 早期测试 |
-| V2 | Cartesian + 4 候选 yaw | 可靠性要求中等 |
-| V3 | 多方向 approach + 分层 retry + retreat | 生产级系统 |
+| V1 | 基础 5 步流程 | 学习研究 |
+| V2 | Cartesian + 4 候选 yaw + 多层重试 | 中等可靠性 |
+| V3 | 16 候选（yaw+方向）+ 分层降级 + retreat | 生产部署 |
 
-## V3 改进版流程 (推荐)
+## V3 执行流程
 
-1. **HOME** - 初始安全位置
-2. **OPEN** - 打开夹爪
-3. **PRE_GRASP** - RRT 规划到目标上方（含 xy 侧向偏移）
-4. **CARTESIAN_APPROACH** - 直线下压到抓取点（支持 3 层降级）
-5. **CLOSE** - 闭合夹爪
-6. **CARTESIAN_LIFT** - 直线上抬（支持 2 层降级）
-7. **RETREAT** - 回到安全高度（避免持物碰撞）
-8. **HOME** - 返回初始位置
+1. HOME - 初始安全位置
+2. OPEN - 打开夹爪
+3. PRE_GRASP - RRT 规划到目标上方（支持 xy 方向偏移）
+4. CARTESIAN_APPROACH - 直线下压到抓取点（支持 3 层降级）
+5. CLOSE - 闭合夹爪
+6. CARTESIAN_LIFT - 直线上抬（支持 2 层降级）
+7. RETREAT - 回到安全高度（避免持物碰撞）
+8. HOME - 返回初始位置
 
 ## 核心改进点
 
-### 1. 目标位姿归一化 (内部处理)
-- 接口语义固定：`/target_cube_pose` 是 cube center in panda_link0
-- 内部自动 clamp: `z >= table_height + cube_half + margin`
-- 上游可以给任意 z，系统自动处理
+1. 目标位姿归一化 - 内部自动处理 Z 轴 clamp，避免上游误操作
 
-### 2. 多方向接近策略
-- 每个 yaw (4 个) × 每个 approach 方向 (4 个) = 16 个候选
-- Approach 方向: 从上方直下 + 3 个侧向接近
-- IK 排序后最多尝试 8 个最优候选
+2. 多方向接近策略 - yaw (4 个) x 接近方向 (4 个) = 16 个候选
 
-### 3. 分层规划重试
-```
-同一候选失败？
-  重试 1 → 增加 planning_time (×2)
-  重试 2 → 放宽 goal tolerance (×2)
-  重试 3 → 切换 planner (RRTstar)
-仍失败 → 换下一个候选
-```
+3. 分层规划重试 - 失败后尝试提高 planning_time、放宽 goal tolerance、切换 planner
 
-### 4. Cartesian 路径智能降级
-```
-Approach 失败？
-  降级 1 → 减小步长 (0.005 → 0.0025 m)
-  降级 2 → 缩短距离 (80% 深度)
-  降级 3 → 两步到达 (部分 + 完整)
-仍失败 → 换候选并重试 RRT
-```
+4. Cartesian 智能降级 - 失败时自动降低步长或缩短距离
 
-### 5. RETREAT 阶段
-- LIFT 后不直接 HOME，先到 `z = grasp_z + 0.20m`
-- 减少持物状态下的碰撞风险
-- 特别适合桌面密集场景
+5. RETREAT 阶段 - 持物后先到安全高度再返回 HOME
 
-### 6. 内部约束管理
-- 自动添加桌面为 collision object
-- Z 轴自动 clamp，无需上游配合
-- 降低集成难度
+6. 内部约束管理 - 自动添加桌面碰撞约束，Z 轴自动 clamp
 
 ## 快速开始
 
+启动 Gazebo 仿真:
 ```bash
-# 启动仿真
 roslaunch franka_zed_gazebo moveit_gazebo_panda.launch gazebo_gui:=true
+```
 
-# V3 推荐版
+启动 V3 管道:
+```bash
 roslaunch panda_grasp_planning grasp_planning_pipeline_v3.launch
+```
 
-# 发送目标 (cube center in panda_link0)
-rostopic pub /target_cube_pose geometry_msgs/PoseStamped "
-header:
-  frame_id: 'panda_link0'
-pose:
-  position: {x: 0.5, y: 0.0, z: 0.12}
-  orientation: {x: 0, y: 0, z: 0, w: 1}"
+发送测试目标:
+```bash
+python3 scripts/comprehensive_test.py --version v3 --num-trials 5
+```
+
+对比 V2/V3 性能:
+```bash
+python3 scripts/comparison_test.py --num-trials 10
 ```
 
 ## 文件清单
 
-- `scripts/grasp_pipeline_node_v3.py` - V3 推荐版 (930 行)
-- `scripts/grasp_pipeline_node_v2.py` - V2 中等版 (780 行)
-- `scripts/grasp_pipeline_node.py` - V1 基础版
-- `launch/grasp_planning_pipeline_v3.launch` - V3 启动文件
-- `config/grasp_params.yaml` - 参数配置
+- scripts/grasp_pipeline_node_v3.py - V3 版本 (809 行)
+- scripts/grasp_pipeline_node_v2.py - V2 版本 (783 行)
+- scripts/grasp_pipeline_node.py - V1 版本
+- scripts/comprehensive_test.py - 多版本测试框架
+- scripts/comparison_test.py - V2/V3 对比测试
+- launch/grasp_planning_pipeline_v3.launch - V3 启动文件
+- config/grasp_params.yaml - 参数配置
+- doc/IMPROVEMENTS_V2.md - V2 改进说明
+- doc/IMPROVEMENTS_V3.md - V3 改进说明
+- doc/VERSION_COMPARISON.md - 版本对比
+- BUG_FIX_LOG.md - 修复日志
 
 ## 关键参数
 

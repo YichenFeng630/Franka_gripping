@@ -10,6 +10,11 @@ Improvements over V2:
 4. Hierarchical Cartesian path failure handling
 5. Layered planning retry strategy (planning_time -> tolerance -> planner)
 6. RETREAT stage for safer home return
+7. **FIXED: Robust candidate retry mechanism**
+   - When PRE_GRASP planning fails, automatically try next candidate (recursive)
+   - When CARTESIAN_LIFT fails, try next candidate instead of failing immediately
+   - When candidate generation fails, properly reset state to IDLE for next target
+   - Prevents pipeline from getting stuck when individual candidates fail
 
 State Machine:
 HOME -> OPEN -> PRE_GRASP -> CARTESIAN_APPROACH -> CLOSE -> 
@@ -73,7 +78,15 @@ class GraspPipeline:
         
         # Store original planning params for retry strategy
         self.original_planning_time = self.planning_time
-        self.original_goal_tolerance = self.move_group.get_goal_tolerance()
+        # Handle tolerance which might be returned as tuple
+        tol_raw = self.move_group.get_goal_tolerance()
+        if isinstance(tol_raw, (list, tuple)):
+            try:
+                self.original_goal_tolerance = float(max(tol_raw))
+            except Exception:
+                self.original_goal_tolerance = 0.01
+        else:
+            self.original_goal_tolerance = float(tol_raw)
         self.available_planners = ['RRTConnect', 'RRTstar']  # For fallback
         
         if self.enable_table_collision:
@@ -290,12 +303,12 @@ class GraspPipeline:
         
         try:
             self.move_group.set_pose_target(pre_grasp.pose)
-            plan = self.move_group.plan()
+            plan_result = self.move_group.plan()
             
-            if isinstance(plan, tuple):
-                pre_ok = plan[0]
+            if isinstance(plan_result, tuple):
+                pre_ok = plan_result[0]
             else:
-                pre_ok = len(plan.joint_trajectory.points) > 0
+                pre_ok = len(plan_result.joint_trajectory.points) > 0
             
             self.move_group.clear_pose_targets()
             
@@ -305,12 +318,12 @@ class GraspPipeline:
             score += 10.0
             
             self.move_group.set_pose_target(grasp.pose)
-            plan = self.move_group.plan()
+            plan_result = self.move_group.plan()
             
-            if isinstance(plan, tuple):
-                grasp_ok = plan[0]
+            if isinstance(plan_result, tuple):
+                grasp_ok = plan_result[0]
             else:
-                grasp_ok = len(plan.joint_trajectory.points) > 0
+                grasp_ok = len(plan_result.joint_trajectory.points) > 0
             
             self.move_group.clear_pose_targets()
             
@@ -343,6 +356,8 @@ class GraspPipeline:
         if not self.grasp_candidates:
             rospy.logerr("No valid candidates generated")
             self.current_state = GraspState.FAILED
+            self.publish_status("FAILED")
+            self.reset_state()  # Reset state to IDLE so next target can be processed
             return
         
         self.current_candidate_idx = 0
@@ -364,51 +379,70 @@ class GraspPipeline:
     
     def execute_grasp_sequence(self):
         """Execute complete grasp with improved state machine"""
-        self.current_trial = {
-            'start_time': time.time(),
-            'target_position': [
-                self.target_pose.pose.position.x,
-                self.target_pose.pose.position.y,
-                self.target_pose.pose.position.z
-            ],
-            'success': False,
-            'failure_reason': None,
-            'candidates_tried': 0,
-            'retries': 0,
-            'cartesian_attempts': []
-        }
+        try:
+            self.current_trial = {
+                'start_time': time.time(),
+                'target_position': [
+                    self.target_pose.pose.position.x,
+                    self.target_pose.pose.position.y,
+                    self.target_pose.pose.position.z
+                ],
+                'success': False,
+                'failure_reason': None,
+                'candidates_tried': 0,
+                'retries': 0,
+                'cartesian_attempts': []
+            }
+            
+            rospy.loginfo("\n" + "="*60)
+            rospy.loginfo("EXECUTING GRASP SEQUENCE")
+            rospy.loginfo("="*60)
+            
+            # Execute pipeline
+            if not self.move_to_home():
+                self.handle_failure("HOME_FAILED", "INITIAL_HOME")
+                return
+            
+            if not self.open_gripper():
+                self.handle_failure("GRIPPER_OPEN_FAILED", "OPEN")
+                return
+            
+            if not self.plan_to_pre_grasp():
+                # Try next candidate instead of failing immediately
+                if not self.try_next_candidate_and_retry():
+                    self.handle_failure("PRE_GRASP_PLANNING_FAILED", "PRE_GRASP")
+                return
+            
+            if not self.cartesian_approach_with_fallback():
+                self.handle_failure("CARTESIAN_APPROACH_FAILED", "APPROACH")
+                return
+            
+            if not self.close_gripper():
+                self.handle_failure("GRIPPER_CLOSE_FAILED", "CLOSE")
+                return
+            
+            if not self.cartesian_lift_with_fallback():
+                # Try next candidate instead of failing immediately
+                if not self.try_next_candidate_and_retry():
+                    self.handle_failure("CARTESIAN_LIFT_FAILED", "LIFT")
+                return
+            
+            if not self.retreat_to_safe():
+                self.handle_failure("RETREAT_FAILED", "RETREAT")
+                return
+            
+            if not self.move_to_home():
+                self.handle_failure("HOME_FAILED", "FINAL_HOME")
+                return
+            
+            # Success
+            self.handle_success()
         
-        rospy.loginfo("\n" + "="*60)
-        rospy.loginfo("EXECUTING GRASP SEQUENCE")
-        rospy.loginfo("="*60)
-        
-        # Execute pipeline
-        if not self.move_to_home():
-            return
-        
-        if not self.open_gripper():
-            return
-        
-        if not self.plan_to_pre_grasp():
-            return
-        
-        if not self.cartesian_approach_with_fallback():
-            return
-        
-        if not self.close_gripper():
-            return
-        
-        if not self.cartesian_lift_with_fallback():
-            return
-        
-        if not self.retreat_to_safe():
-            return
-        
-        if not self.move_to_home():
-            return
-        
-        # Success
-        self.handle_success()
+        except Exception as e:
+            rospy.logerr(f"Exception in execute_grasp_sequence: {e}")
+            self.handle_failure(f"EXCEPTION: {str(e)}", "SEQUENCE")
+            import traceback
+            traceback.print_exc()
     
     def move_to_home(self):
         """Move to home configuration"""
@@ -511,8 +545,17 @@ class GraspPipeline:
     def compute_and_execute_cartesian(self, waypoints, step_size, description):
         """Compute and execute Cartesian path, return (fraction, success)"""
         try:
+            # Noetic MoveIt: compute_cartesian_path expects list of Pose objects
+            # Input waypoints may be Pose or PoseStamped; extract .pose if needed
+            pose_waypoints = []
+            for wp in waypoints:
+                if isinstance(wp, PoseStamped):
+                    pose_waypoints.append(wp.pose)
+                else:
+                    pose_waypoints.append(wp)
+            
             (plan, fraction) = self.move_group.compute_cartesian_path(
-                waypoints, step_size, jump_threshold=0.0
+                pose_waypoints, step_size, avoid_collisions=True
             )
             
             self.current_trial['cartesian_attempts'].append({
@@ -611,8 +654,8 @@ class GraspPipeline:
         Retry 2: Relax goal tolerance
         Retry 3: Switch planner
         """
-        original_time = self.move_group.get_planning_time()
-        original_tolerance = self.move_group.get_goal_tolerance()
+        original_time = self.original_planning_time
+        original_tolerance = self.original_goal_tolerance
         current_planner = self.move_group.get_planner_id()
         
         for attempt in range(max_retries):
@@ -632,11 +675,13 @@ class GraspPipeline:
                 rospy.loginfo(f"{description}: retry 2 with relaxed tolerance")
             
             self.move_group.set_pose_target(pose.pose)
-            plan = self.move_group.plan()
+            plan_result = self.move_group.plan()
             
-            if isinstance(plan, tuple):
-                success = plan[0]
+            if isinstance(plan_result, tuple):
+                success = plan_result[0]
+                plan = plan_result[1]
             else:
+                plan = plan_result
                 success = len(plan.joint_trajectory.points) > 0
             
             self.move_group.clear_pose_targets()
@@ -660,32 +705,50 @@ class GraspPipeline:
         
         return False
     
-    def plan_and_execute_joints(self, joint_values, description):
-        """Plan and execute to joint configuration"""
-        self.move_group.set_joint_value_target(joint_values)
+    def plan_and_execute_joints(self, joint_values, description, max_retries=3):
+        """Plan and execute to joint configuration with retry"""
+        for attempt in range(max_retries):
+            try:
+                self.move_group.set_joint_value_target(joint_values)
+                
+                plan_result = self.move_group.plan()
+                
+                # Handle both old (tuple) and new (RobotTrajectory) return formats
+                if isinstance(plan_result, tuple):
+                    success = plan_result[0]
+                    plan = plan_result[1]
+                else:
+                    plan = plan_result
+                    success = len(plan.joint_trajectory.points) > 0
+                
+                if not success:
+                    rospy.logwarn(f"{description} planning failed (attempt {attempt+1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        rospy.sleep(0.5)
+                    continue
+                
+                # Execution
+                exec_success = self.move_group.execute(plan, wait=True)
+                
+                if exec_success:
+                    rospy.loginfo(f"{description} executed")
+                    return True
+                else:
+                    rospy.logwarn(f"{description} execution failed (attempt {attempt+1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        rospy.sleep(0.5)
+                    continue
+            
+            except Exception as e:
+                rospy.logwarn(f"{description} exception: {e} (attempt {attempt+1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    rospy.sleep(0.5)
         
-        plan = self.move_group.plan()
-        
-        if isinstance(plan, tuple):
-            success = plan[0]
-        else:
-            success = len(plan.joint_trajectory.points) > 0
-        
-        if not success:
-            rospy.logwarn(f"{description} planning failed")
-            return False
-        
-        exec_success = self.move_group.execute(plan, wait=True)
-        
-        if exec_success:
-            rospy.loginfo(f"{description} executed")
-        else:
-            rospy.logwarn(f"{description} execution failed")
-        
-        return exec_success
+        rospy.logerr(f"{description} failed after {max_retries} attempts")
+        return False
     
     def try_next_candidate_and_retry(self):
-        """Try next grasp candidate"""
+        """Try next grasp candidate with recursive retry"""
         self.current_candidate_idx += 1
         self.current_trial['candidates_tried'] = self.current_candidate_idx + 1
         
@@ -700,10 +763,19 @@ class GraspPipeline:
             return False
         
         if self.load_candidate(self.current_candidate_idx):
-            rospy.loginfo("Retrying with next candidate...")
-            # Re-plan to pre-grasp and approach
+            rospy.loginfo(f"Retrying with candidate {self.current_candidate_idx + 1}/{len(self.grasp_candidates)}...")
+            # Re-plan to pre-grasp
             if self.plan_to_pre_grasp():
-                return self.cartesian_approach_with_fallback()
+                # Try approach
+                result = self.cartesian_approach_with_fallback()
+                if result:
+                    return True
+                # If approach failed, it already tried next candidate, return result
+                return result
+            else:
+                # Pre-grasp planning failed for this candidate, try next one recursively
+                rospy.logwarn(f"Candidate {self.current_candidate_idx} pre-grasp planning failed, trying next...")
+                return self.try_next_candidate_and_retry()
         
         return False
     

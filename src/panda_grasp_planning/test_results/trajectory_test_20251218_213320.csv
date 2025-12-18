@@ -1,0 +1,1 @@
+trial_id,target_x,target_y,target_z,description,timestamp,success,failure_reason,total_time,planning_time,execution_time,candidates_generated,candidates_tried,planning_retries,cartesian_retries,total_retries,final_status
