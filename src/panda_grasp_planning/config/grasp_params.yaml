@@ -4,7 +4,7 @@
 grasp:
   # Height offsets (relative to grasp point)
   pre_grasp_offset_z: 0.15        # Distance above grasp point for approach
-  grasp_offset_z: 0.02            # Offset from cube center to grasp contact
+  grasp_offset_z: 0.005           # Offset from cube center (0.5cm ABOVE center to grasp middle of cube)
   lift_offset_z: 0.15             # Distance above grasp after grasping
   retreat_offset_z: 0.20          # Safe height before returning home
   
@@ -19,12 +19,9 @@ grasp:
     enable: true
     yaw_angles: [0.0, 1.5708, 3.14159, 4.71239]  # 0°, 90°, 180°, 270°
     # Approach directions: [[x_offset, y_offset], ...]
-    # Top approach + 4 side approaches
+    # Only vertical approach (no side pushes)
     approach_directions: [
-      [0.0, 0.0],      # From top (straight down)
-      [0.1, 0.0],      # From +X side
-      [-0.1, 0.0],     # From -X side
-      [0.0, 0.1]       # From +Y side
+      [0.0, 0.0]       # From top (straight down ONLY)
     ]
     max_candidates: 8
   
@@ -32,16 +29,21 @@ grasp:
   cartesian:
     step_size: 0.005              # 5mm resolution
     jump_threshold: 0.0           # No joint space jumps
-    min_fraction: 0.95            # 95% completeness required
+    min_fraction: 0.70            # 70% completeness required (relaxed for better success rate)
+    
+  # Two-stage descent parameters
+  approach_stages:
+    pre_contact_height: 0.10      # Stop 10cm above target (more clearance for planning)
+    final_descent_speed_factor: 0.3  # Slower speed for final descent (30% of normal)
 
 # Gripper control parameters
 gripper:
   # Opening width (meters)
   open_width: 0.08   # Fully open
-  close_width: 0.02  # Grasp width for small objects
+  close_width: 0.041 # Grasp width for 45mm cube (41mm = slightly wider for better grip stability)
   
   # Control parameters
-  max_effort: 50.0   # Maximum gripper force (Newtons)
+  max_effort: 150.0  # Maximum gripper force (Newtons) - increased from 50 to 150 for better grip
   speed: 0.1         # Gripper movement speed (m/s)
   
   # Grasp quality parameters
@@ -66,7 +68,7 @@ failure_handling:
 environment:
   table_height: 0.0              # Table surface in base frame (meters)
   safety_margin_z: 0.08          # Minimum height above table (meters)
-  cube_half_size: 0.015          # Half size of cube for normalization
+  cube_half_size: 0.0225         # Half size of 45mm cube (0.045m / 2 = 0.0225m)
   enable_table_collision: true   # Add table as collision object
   table_dimensions:
     x: 1.0

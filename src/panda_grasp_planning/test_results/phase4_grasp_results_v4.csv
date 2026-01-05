@@ -1,0 +1,2 @@
+trial,timestamp,target_x,target_y,target_z,success,total_time,candidates_tried,retries,failure_reason,version,object_color,target_bin
+1,2026-01-04 17:05:21,0.5344421851525049,0.025795440294030247,0.1468228632332338,False,7.615948438644409,5,12,PRE_GRASP_PLANNING_FAILED,V4_TWO_STAGE_DESCENT,UNKNOWN,N/A

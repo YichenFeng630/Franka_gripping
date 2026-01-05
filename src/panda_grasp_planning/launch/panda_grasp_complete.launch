@@ -1,0 +1,99 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Complete Panda Grasp Planning System -->
+  <!-- Features: V3 Pipeline + Perception + VLA Decision + Action Executor -->
+  
+  <arg name="use_perception" default="true" doc="Enable vision-based target detection"/>
+  <arg name="use_vla" default="false" doc="Enable VLA-based candidate scoring"/>
+  <arg name="use_zed2" default="false" doc="Launch ZED2 camera driver"/>
+  <arg name="sim" default="true" doc="Use simulation (Gazebo) instead of real robot"/>
+  <arg name="rviz" default="true" doc="Launch RViz visualization"/>
+  <arg name="enable_place_to_bin" default="false" doc="Enable place-to-bin execution (Phase 1S)"/>
+
+  <!-- ========== GAZEBO + MoveIt FOUNDATION ========== -->
+  <!-- Launch Gazebo with Panda robot and MoveIt planning -->
+  <include file="$(find franka_zed_gazebo)/launch/moveit_gazebo_panda.launch" if="$(arg sim)">
+    <arg name="gazebo_gui" value="true" />
+    <arg name="paused" value="false" />
+  </include>
+
+  <!-- Load configuration parameters -->
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/grasp_params.yaml" />
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/planning_params.yaml" />
+  <rosparam command="load" file="$(find panda_grasp_planning)/config/action_space.yaml" />
+
+  <!-- ========== CAMERA SYSTEM ========== -->
+  <!-- ZED2 Camera Driver (optional) -->
+  <group if="$(arg use_zed2)">
+    <include file="$(find zed_wrapper)/launch/zed2.launch">
+      <arg name="camera_id" value="0" />
+      <arg name="resolution" value="2" />      <!-- VGA resolution -->
+      <arg name="frame_rate" value="30" />
+      <arg name="depth_mode" value="0" />      <!-- PERFORMANCE mode -->
+      <arg name="publish_urdf" value="true" />
+      <arg name="publish_tf" value="true" />
+    </include>
+  </group>
+
+  <!-- ========== PERCEPTION MODULE ========== -->
+  <!-- Vision-based target detection from RGB-D -->
+  <!-- Note: perception_node is located in modules/perception/ -->
+  <group if="$(arg use_perception)">
+    <!-- For now, perception is optional in simulation -->
+    <!-- In real deployment, would subscribe to ZED2 camera topics -->
+  </group>
+
+  <!-- ========== VLA DECISION MODULE ========== -->
+  <!-- Vision Language Model-based candidate scoring -->
+  <group if="$(arg use_vla)">
+    <node 
+      name="vla_adapter_node" 
+      pkg="panda_grasp_planning" 
+      type="vla_inference.py"
+      output="screen"
+      required="false">
+      <param name="model_checkpoint" value="openvla/openvla-7b-v1" />
+      <param name="temperature" value="0.7" />
+      <param name="use_lora" value="false" />          <!-- Enable after LoRA fine-tuning -->
+    </node>
+  </group>
+
+  <!-- ========== MAIN GRASP EXECUTION PIPELINE ========== -->
+  <!-- V3 Pipeline: Multi-directional approach + Hierarchical retry + RETREAT stage -->
+  <node 
+    name="grasp_pipeline_v3" 
+    pkg="panda_grasp_planning" 
+    type="grasp_pipeline_v3.py" 
+    output="screen"
+    required="true">
+    <param name="use_gripper" value="true" />        <!-- Enable Franka hand gripper control -->
+    <param name="simulation_mode" value="$(arg sim)" />
+    <param name="use_perception" value="$(arg use_perception)" />
+    <param name="use_vla_scoring" value="$(arg use_vla)" />
+    <param name="enable_place_to_bin" value="$(arg enable_place_to_bin)" />  <!-- Phase 1S: Place-to-bin -->
+  </node>
+
+  <!-- ========== VISUALIZATION ========== -->
+  <!-- RViz for monitoring robot state and trajectory -->
+  <group if="$(arg rviz)">
+    <node 
+      name="rviz" 
+      pkg="rviz" 
+      type="rviz"
+      args="-d $(find panda_grasp_planning)/rviz/panda_grasp.rviz"
+      output="screen"
+      required="false"
+      launch-prefix="bash -c 'sleep 2; $0 $@' " />
+  </group>
+
+  <!-- ========== MONITORING & LOGGING ========== -->
+  <!-- Optional: RQT Console for real-time log monitoring -->
+  <node 
+    name="rqt_console" 
+    pkg="rqt_console" 
+    type="rqt_console" 
+    output="screen"
+    required="false"
+    launch-prefix="bash -c 'sleep 3; $0 $@' " />
+
+</launch>

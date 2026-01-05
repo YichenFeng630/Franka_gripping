@@ -1,0 +1,119 @@
+# V4 Grasp Parameters - Eye-on-Hand Optimization
+# Extends grasp_params.yaml with V4-specific configuration
+
+grasp:
+  # ============================================================
+  # V4 Two-Stage Descent Configuration
+  # ============================================================
+  # Inspired by eye-on-hand-grasping reference implementation
+  # Provides smoother object interaction and better grip stability
+  
+  v4_descent:
+    # Stage 1: Fast descent to pre-contact height
+    # Purpose: Rapidly approach object from safe distance
+    stage1_descent_distance: 0.10        # 10cm safe margin above object
+    stage1_step_size: 0.005              # 5mm Cartesian step (inherited from standard cartesian config)
+    stage1_min_fraction: 0.70            # 70% path completion required
+    stage1_velocity_scale: 0.20          # 20% velocity (normal speed)
+    stage1_accel_scale: 0.10             # 10% acceleration (normal acceleration)
+    
+    # Stage 2: Cautious descent with fine contact detection
+    # Purpose: Gentle contact with fine-grained control
+    stage2_step_size: 0.001              # 1mm ultra-fine step size (4x finer than Stage 1)
+    stage2_min_fraction: 0.60            # 60% path completion required (more lenient for fine steps)
+    stage2_velocity_scale: 0.05          # 5% velocity (ultra-cautious)
+    stage2_accel_scale: 0.03             # 3% acceleration (smooth jerk-limited)
+    
+    # Contact detection parameters
+    # For force-based systems, these control when to switch from descent to grasp
+    contact_force_threshold: 5.0         # 5N force for initial contact detection
+    contact_force_margin: 2.0            # 2N safety margin above threshold
+    contact_confirmation_time: 0.2       # 200ms to confirm contact
+    max_contact_attempts: 3              # Retry contact detection up to 3 times
+  
+  # ============================================================
+  # V4 Two-Stage Gripper Closing Configuration
+  # ============================================================
+  # Soft grasp → Firm grasp for better object assessment and grip
+  
+  v4_gripper:
+    # Stage 1: Soft grasp (initial contact)
+    # Purpose: Gentle contact, assess object properties (friction, size, etc.)
+    soft_grasp_width: 0.042              # 4.2cm width (touch object gently)
+    soft_grasp_force: 25.0               # 25N initial force (light grip)
+    soft_grasp_speed: 0.05               # 5cm/s slow speed (careful approach)
+    soft_grasp_duration: 0.5             # 500ms to assess and stabilize
+    soft_grasp_epsilon_inner: 0.005
+    soft_grasp_epsilon_outer: 0.005
+    
+    # Stage 2: Firm grasp (final secure grip)
+    # Purpose: Secure final grip with confidence
+    firm_grasp_width: 0.020              # 2cm width (firm grip for 45mm cube)
+    firm_grasp_force: 150.0              # 150N final force (strong grip)
+    firm_grasp_speed: 0.10               # 10cm/s normal speed (confident)
+    firm_grasp_duration: 0.5             # 500ms final stabilization
+    firm_grasp_epsilon_inner: 0.005
+    firm_grasp_epsilon_outer: 0.005
+    
+    # Transition parameters
+    transition_delay: 0.3                # 300ms pause between soft and firm grasp
+    # If object slips during soft grasp, skip to firm immediately
+    slip_detection_enabled: false        # Requires force feedback
+    slip_threshold: 10.0                 # N (rate of force change)
+  
+  # ============================================================
+  # V4 Approach Directions (optimized for stability)
+  # ============================================================
+  # NOTE: Override in launch file if different approach strategy desired
+  # Current default: vertical-only approach (no lateral pushing)
+  
+  candidates:
+    approach_directions: [
+      [0.0, 0.0]       # From top ONLY - prevents lateral object shift
+      # Disable side approaches for V4 (they can destabilize objects)
+      # [0.1, 0.0]     # From +X (side approach - disabled)
+      # [-0.1, 0.0]    # From -X (side approach - disabled)
+      # [0.0, 0.1]     # From +Y (side approach - disabled)
+      # [0.0, -0.1]    # From -Y (side approach - disabled)
+    ]
+    # Yaw angles remain the same as V3
+    yaw_angles: [0.0, 1.5708, 3.14159, 4.71239]  # 0°, 90°, 180°, 270°
+  
+  # ============================================================
+  # V4 Cartesian Parameters (refined for fine-grained descent)
+  # ============================================================
+  
+  cartesian:
+    step_size: 0.005              # Stage 1 step size
+    jump_threshold: 0.0           # No joint space jumps
+    avoid_collisions: true
+    # Cartesian path min_fraction for each stage is set dynamically
+    # in the Python code based on stage (0.70 for S1, 0.60 for S2)
+
+# ============================================================
+# Recommended Tuning Guidelines
+# ============================================================
+
+# For FASTER execution (but less stable):
+# - Increase stage2_velocity_scale to 0.10 (10%)
+# - Increase stage2_accel_scale to 0.05 (5%)
+# - Reduce stage2_step_size to 0.002 (2mm)
+# - Reduce soft_grasp_duration to 0.2s
+
+# For MORE STABLE execution (slower but more reliable):
+# - Decrease stage2_velocity_scale to 0.03 (3%)
+# - Decrease stage2_accel_scale to 0.02 (2%)
+# - Reduce stage2_step_size to 0.0005 (0.5mm)
+# - Increase soft_grasp_duration to 1.0s
+
+# For FRAGILE/DELICATE objects:
+# - Use soft_grasp_force: 15.0 (very gentle)
+# - Use firm_grasp_force: 50.0 (careful final grip)
+# - Reduce stage2_velocity_scale to 0.02 (2%)
+# - Increase transition_delay to 0.5s
+
+# For ROUGH/HIGH-FRICTION objects:
+# - Use soft_grasp_force: 35.0 (firm initial contact)
+# - Use firm_grasp_force: 200.0 (very strong grip)
+# - Can use faster stage2_velocity_scale: 0.08 (8%)
+# - Reduce soft_grasp_duration to 0.3s

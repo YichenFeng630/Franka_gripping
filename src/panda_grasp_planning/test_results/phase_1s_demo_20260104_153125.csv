@@ -1,0 +1,2 @@
+trial,timestamp,target_x,target_y,target_z,target_color,cube_name,success,elapsed_time,final_status
+1,2026-01-04 15:31:47,0.41111365330057925,-0.29895187995800887,0.022395373193708355,RED,cube_0,True,16.645229816436768,SUCCESS

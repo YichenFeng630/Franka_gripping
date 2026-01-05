@@ -1,0 +1,92 @@
+# Action Space Definition for Panda Grasp Planning + VLA/Learning Policies
+# 统一动作空间定义：用于 V3 Pipeline + 所有学习策略的接口标准
+
+action_space:
+  # 基本参数
+  dim: 7  # [dx, dy, dz, droll, dpitch, dyaw, gripper_cmd]
+  
+  # 坐标系选择
+  # "world": 相对panda_link0的固定坐标系（推荐用于全局策略学习）
+  # "ee_local": 相对手爪local坐标系（推荐用于local闭环控制）
+  coordinate_frame: "world"
+  
+  # 控制频率（必须固定）
+  control_hz: 10  # 10 Hz = 100ms per step
+  
+  # 单步动作的界限
+  bounds:
+    translation:
+      range_m: 0.1       # ±10cm per step
+      step_size_m: 0.01  # 1cm resolution (for discretization)
+    
+    rotation:
+      range_rad: 0.1745  # ±10° per step (0.1745 rad)
+      step_size_rad: 0.0175  # 1° resolution
+    
+    gripper:
+      type: "binary"     # "binary" (grasp/release) or "continuous" (0-0.08m width)
+      # For continuous:
+      # range: [0.0, 0.08]  # m (fully closed to fully open)
+
+  # 工作空间限制 (panda_link0 frame)
+  workspace:
+    x_range: [0.3, 0.7]    # meters
+    y_range: [-0.4, 0.4]   # meters
+    z_range: [0.0, 0.6]    # meters (table ~0, gripper max ~0.6)
+  
+  # 速度和加速度限制（安全约束）
+  safety:
+    max_linear_velocity_m_s: 0.5      # 50cm/s (safe for collaborative robot)
+    max_angular_velocity_rad_s: 1.0   # ~57°/s
+    max_linear_accel_m_s2: 1.0
+    max_angular_accel_rad_s2: 2.0
+    
+    # 碰撞检测间隔
+    collision_check_interval: 5  # Check every 5 steps (0.5s)
+
+# 执行配置
+execution:
+  # Receding Horizon模式：预测长序列，但每次只执行一步后重新预测
+  # 优点: 能纠正累积误差，稳定性高
+  receding_horizon: true
+  prediction_horizon: 8    # 预测8步 = 0.8s
+  execution_steps_per_prediction: 1  # 执行1步后重新预测
+  
+  # 全序列执行（不推荐）：
+  # full_sequence_execution: false
+
+  # 规划超时
+  cartesian_planning_timeout_s: 5.0
+  rrt_planning_timeout_s: 30.0
+
+# Phase 2 (VLA) 特定配置
+vla:
+  enabled: false  # 通过参数设置开启/关闭
+  model_checkpoint: "openvla/openvla-7b-v1"
+  temperature: 0.7  # Sampling temperature for VLA outputs
+  use_lora: false   # 微调后启用LoRA
+
+# Phase 3 (Learning Policy) 特定配置
+learning:
+  enabled: false
+  policy_type: "diffusion"  # "act" or "diffusion"
+  checkpoint: "~/.ros/checkpoints/policy_latest.pt"
+  
+  # Observation stacking
+  observation_stack_size: 1  # Number of frames to stack
+  action_smoothing: 0.3      # EMA smoothing for actions (0-1)
+
+# 数据日志配置
+logging:
+  enabled: true
+  output_dir: "~/.ros/grasp_data/"
+  record_depth: true
+  record_pointcloud: false  # 太大，default关闭
+  record_trajectory: true   # 记录机械臂轨迹
+  record_gripper_force: true
+
+# 版本标记
+metadata:
+  version: "1.0"
+  created_date: "2025-12-30"
+  description: "Unified action space for V3 Pipeline + VLA + Learning policies"

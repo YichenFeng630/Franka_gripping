@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simple test launch for gripper -->
+  
+  <include file="$(find franka_zed_gazebo)/launch/moveit_gazebo_panda.launch">
+    <arg name="gazebo_gui" value="true" />
+    <arg name="paused" value="false" />
+  </include>
+
+  <!-- Spawn cubes -->
+  <node 
+    name="spawn_cubes" 
+    pkg="franka_zed_gazebo" 
+    type="spawn_cubes.py" 
+    output="screen"
+    required="false" />
+
+  <!-- Grasp Pipeline with gripper enabled -->
+  <node 
+    name="grasp_pipeline_v3" 
+    pkg="panda_grasp_planning" 
+    type="grasp_pipeline_v3.py" 
+    output="screen"
+    required="true">
+    <param name="use_gripper" value="true" />
+    <param name="simulation_mode" value="true" />
+    <param name="enable_place_to_bin" value="false" />
+  </node>
+
+</launch>

@@ -1,0 +1,2 @@
+trial_num,model_name,color,success,failure_stage,elapsed_time,cube_x,cube_y,cube_z,placed_in_bin
+1,cube_0,RED,True,,14.986156463623047,0.548071569091853,0.09253486693683077,0.02241448701489848,False
