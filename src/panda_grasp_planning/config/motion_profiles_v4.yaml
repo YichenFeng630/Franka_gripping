@@ -1,0 +1,172 @@
+# 运动配置文件 - 与Reference项目的预定义positions对齐
+# 对应Reference: pymoveit2/examples/pick_and_place.py 中的joint预定义
+
+# 关键位置 (单位: 弧度)
+# Franka Panda有7个关节: panda_joint1 到 panda_joint7
+
+motion_profiles:
+  # 起始位置 (参考Reference的start_joints)
+  start:
+    joints: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.18]
+    description: "初始位置，手臂立起"
+    velocity_scale: 0.3
+    acceleration_scale: 0.3
+
+  # 主工作位置 (参考Reference的home_joints)
+  home:
+    joints: [0.0, 0.0, 0.0, -1.57, 0.0, 1.57, 0.87]
+    description: "准备好的家位置，朝向工作区"
+    velocity_scale: 0.2
+    acceleration_scale: 0.2
+
+  # 放置位置 - BIN 1 (红色/黄色)
+  # Reference的drop_joints基础上调整
+  bin_1_approach:
+    joints: [-2.71, 0.52, -0.35, -2.16, 0.77, 2.84, 0.12]
+    description: "靠近分类箱1的放置位置"
+    velocity_scale: 0.15
+    acceleration_scale: 0.15
+
+  bin_1_drop:
+    joints: [-2.71, 0.82, -0.35, -2.16, 0.77, 2.84, 0.12]
+    description: "在分类箱1上方的放置位置"
+    velocity_scale: 0.1
+    acceleration_scale: 0.1
+
+  # 放置位置 - BIN 2 (蓝色)
+  bin_2_approach:
+    joints: [-1.57, 0.52, -0.35, -2.16, 0.77, 2.84, 0.12]
+    description: "靠近分类箱2的放置位置"
+    velocity_scale: 0.15
+    acceleration_scale: 0.15
+
+  bin_2_drop:
+    joints: [-1.57, 0.82, -0.35, -2.16, 0.77, 2.84, 0.12]
+    description: "在分类箱2上方的放置位置"
+    velocity_scale: 0.1
+    acceleration_scale: 0.1
+
+  # 放置位置 - BIN 3 (绿色)
+  bin_3_approach:
+    joints: [0.52, 0.52, -0.35, -2.16, 0.77, 2.84, 0.12]
+    description: "靠近分类箱3的放置位置"
+    velocity_scale: 0.15
+    acceleration_scale: 0.15
+
+  bin_3_drop:
+    joints: [0.52, 0.82, -0.35, -2.16, 0.77, 2.84, 0.12]
+    description: "在分类箱3上方的放置位置"
+    velocity_scale: 0.1
+    acceleration_scale: 0.1
+
+# 拾取参数
+grasp:
+  # 拾取接近高度 (Z方向，相对于物体)
+  approach_height: 0.10  # 10cm above object
+  
+  # 拾取深度 (向下的距离)
+  descent_depth: 0.05  # 5cm below approach
+  
+  # 拾取速度 (相对于v4_demo.py的下降速度)
+  descent_velocity_scale: 0.03
+  
+  # 微调参数 (用于边缘拾取修正)
+  micro_adjust:
+    lift_height: 0.03  # 3cm上升
+    dwell_time: 0.5    # 暂停0.5秒
+    lower_back: true   # 是否降回
+  
+  # 夹爪参数
+  gripper:
+    close_width: 0.043      # 4.3cm (针对45mm cube)
+    open_width: 0.080       # 8.0cm (最大开启)
+    close_speed: 0.05       # m/s
+    force: 90               # N
+    finger_collision_threshold: 100  # 检测物体的力阈值
+
+# 轨迹平滑参数
+trajectory:
+  # 是否使用时间参数化 (IPTP)
+  use_iptp: true
+  
+  # 笛卡尔下降的重新时间化
+  retime_trajectory: true
+  
+  # 速度缩放范围
+  velocity_limits:
+    min: 0.01
+    default: 0.1
+    max: 0.5
+  
+  # 加速度缩放范围
+  acceleration_limits:
+    min: 0.01
+    default: 0.1
+    max: 0.5
+
+# 坐标变换参数
+transforms:
+  # TCP偏移量 (手爪对接点到指尖的距离)
+  tcp_offset:
+    x: 0.0
+    y: 0.0
+    z: 0.103  # 10.3cm (ZED2的下方)
+  
+  # 相机到手爪的变换 (用于增强感知)
+  camera_to_gripper:
+    # 相对于panda_hand的位置
+    position:
+      x: -0.097397
+      y: 0.0
+      z: 0.0274111
+    # 欧拉角 (RPY)
+    rotation:
+      x: 0.0
+      y: -0.824473  # 约-47度
+      z: 0.0
+
+# 安全限制
+safety:
+  # 最小安全距离 (表面到table)
+  min_z_safety_margin: 0.02  # 2cm
+  
+  # 关节速度限制 (参考Panda规格)
+  joint_velocity_limits:
+    - 2.0  # panda_joint1
+    - 2.0  # panda_joint2
+    - 2.0  # panda_joint3
+    - 2.0  # panda_joint4
+    - 2.6  # panda_joint5
+    - 2.6  # panda_joint6
+    - 2.6  # panda_joint7
+  
+  # 关节加速度限制
+  joint_acceleration_limits:
+    - 10.0
+    - 10.0
+    - 10.0
+    - 10.0
+    - 15.0
+    - 15.0
+    - 15.0
+
+# 颜色到分类箱的映射
+color_to_bin:
+  R: BIN_1  # 红色 -> BIN_1
+  Y: BIN_1  # 黄色 -> BIN_1
+  G: BIN_3  # 绿色 -> BIN_3
+  B: BIN_2  # 蓝色 -> BIN_2
+
+# 调试和可视化
+debug:
+  # 发布调试信息
+  publish_debug_info: true
+  
+  # 在RViz中显示轨迹
+  display_trajectory: true
+  
+  # 显示颜色检测结果
+  display_color_detection: true
+  
+  # 日志级别: DEBUG, INFO, WARN, ERROR
+  log_level: INFO
