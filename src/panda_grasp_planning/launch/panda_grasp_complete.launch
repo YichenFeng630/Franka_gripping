@@ -26,21 +26,25 @@
   <!-- ZED2 Camera Driver (optional) -->
   <group if="$(arg use_zed2)">
     <include file="$(find zed_wrapper)/launch/zed2.launch">
-      <arg name="camera_id" value="0" />
-      <arg name="resolution" value="2" />      <!-- VGA resolution -->
-      <arg name="frame_rate" value="30" />
-      <arg name="depth_mode" value="0" />      <!-- PERFORMANCE mode -->
+      <arg name="camera_model" value="zed2" />
       <arg name="publish_urdf" value="true" />
-      <arg name="publish_tf" value="true" />
     </include>
   </group>
 
   <!-- ========== PERCEPTION MODULE ========== -->
   <!-- Vision-based target detection from RGB-D -->
-  <!-- Note: perception_node is located in modules/perception/ -->
+  <!-- In simulation: launches ZED2 perception with Gazebo topics -->
+  <!-- In real robot: will use real ZED2 camera driver -->
   <group if="$(arg use_perception)">
-    <!-- For now, perception is optional in simulation -->
-    <!-- In real deployment, would subscribe to ZED2 camera topics -->
+    <!-- NOTE: TF for ZED2 camera is handled by URDF via franka_zed_gazebo -->
+    <!-- Camera is mounted on panda_hand via camera_joint -->
+    <!-- No static TF needed - dynamic TF comes from robot_state_publisher -->
+    
+    <!-- Launch ZED2 perception in simulation mode -->
+    <include file="$(find panda_grasp_planning)/launch/zed2_perception.launch" if="$(arg sim)">
+      <arg name="sim" value="true" />
+      <arg name="target_color" value="red" />
+    </include>
   </group>
 
   <!-- ========== VLA DECISION MODULE ========== -->

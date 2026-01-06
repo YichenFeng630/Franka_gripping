@@ -36,6 +36,7 @@ from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from moveit_commander import MoveGroupCommander, RobotCommander
 from std_msgs.msg import String
 from tf.transformations import quaternion_from_euler
+import tf2_ros
 
 # Import sorting state machine for bin assignment
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -92,6 +93,26 @@ class V4GraspDemo:
         self.current_vel_scale = self.max_vel_normal
         self.current_acc_scale = self.max_acc_normal
         
+        # ZED2 Integration (Phase 1)
+        self.use_zed2 = args.zed2 if hasattr(args, 'zed2') and args.zed2 else False
+        self.use_perception = self.use_zed2  # Perception enabled if ZED2 is enabled
+        self.current_object_pose = None
+        self.detected_color = None
+        self.tf_buffer = None
+        
+        if self.use_zed2:
+            rospy.loginfo("🎥 ZED2 perception enabled, subscribing to /object_pose...")
+            rospy.Subscriber("/object_pose", PoseStamped, self.object_pose_callback)
+            rospy.Subscriber("/detection_status", String, self.detection_status_callback)
+            rospy.Subscriber("/detected_objects", String, self.detected_objects_callback)
+            # Wait for ZED2 node to start
+            rospy.sleep(2.0)
+            self.tf_buffer = tf2_ros.Buffer()
+            self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+            
+            # Phase 2: Multi-color detection storage
+            self.detected_objects_list = []  # List of detected objects from ZED2
+        
         # Gripper actions
         self.gripper_move = actionlib.SimpleActionClient("/franka_gripper/move", MoveAction)
         self.gripper_grasp = actionlib.SimpleActionClient("/franka_gripper/grasp", GraspAction)
@@ -104,7 +125,7 @@ class V4GraspDemo:
         from sensor_msgs.msg import JointState
         self.gripper_state_sub = rospy.Subscriber("/franka_gripper/joint_states", JointState, self.gripper_state_callback)
         
-        # Gazebo services
+        # Gazebo services (backup)
         rospy.wait_for_service("/gazebo/get_world_properties", timeout=10)
         rospy.wait_for_service("/gazebo/get_model_state", timeout=10)
         self.get_world_properties = rospy.ServiceProxy("/gazebo/get_world_properties", GetWorldProperties)
@@ -116,9 +137,13 @@ class V4GraspDemo:
         # Status publisher
         self.status_pub = rospy.Publisher("/grasp_planning_status", String, queue_size=10)
         
-        # Cube tracking
-        self.cube_colors = {}  # model_name -> color
-        self.color_sub = rospy.Subscriber("/cube_properties", String, self.cube_properties_callback, queue_size=100)
+        # Target color selection (Phase 2)
+        self.target_color = rospy.get_param('~target_color', 'red')
+        rospy.Subscriber("/target_color", String, self.target_color_callback)
+        
+        # Detected objects from ZED2 perception
+        self.detected_objects_list = []  # List of detected objects with colors
+        self.detected_objects_sub = rospy.Subscriber("/detected_objects", String, self.detected_objects_callback, queue_size=10)
         
         # Results
         self.results = []
@@ -135,8 +160,27 @@ class V4GraspDemo:
         rospy.loginfo("="*60)
         rospy.loginfo(f"Trials: {self.num_trials}")
         rospy.loginfo(f"Place-to-bin: {'ENABLED' if self.enable_place else 'DISABLED'}")
+        rospy.loginfo(f"ZED2 perception: {'ENABLED' if self.use_zed2 else 'DISABLED (using Gazebo)'}")
         rospy.loginfo(f"Results: {self.output_csv}")
         rospy.loginfo("="*60)
+        
+    def object_pose_callback(self, msg: PoseStamped):
+        """Receive object pose from ZED2 perception node."""
+        self.current_object_pose = msg
+        if self.verbose:
+            rospy.loginfo(f"🎥 ZED2 detection: x={msg.pose.position.x:.3f}, y={msg.pose.position.y:.3f}, z={msg.pose.position.z:.3f}")
+    
+    def detection_status_callback(self, msg: String):
+        """Receive detection status from ZED2 perception node."""
+        status = msg.data
+        if status.startswith("FOUND:"):
+            self.detected_color = status.split(":")[1]
+            rospy.loginfo(f"✓ Detected color: {self.detected_color}")
+    
+    def target_color_callback(self, msg: String):
+        """Update target color dynamically from ROS topic."""
+        self.target_color = msg.data.lower()
+        rospy.loginfo(f"🎨 Target color changed to: {self.target_color}")
         
         # Wait for cube tracking
         rospy.sleep(3.0)
@@ -162,10 +206,50 @@ class V4GraspDemo:
         try:
             import json
             data = json.loads(msg.data)
-            self.cube_colors[data['name']] = data['color']
+            # spawn_cubes.py publishes 'cube_name' and 'color'
+            model_name = data.get('cube_name') or data.get('name')
+            color = data.get('color')
+            if model_name and color:
+                self.cube_colors[model_name] = color
+                if self.verbose:
+                    rospy.loginfo(f"✓ Tracked cube: {model_name} = {color}")
         except Exception as e:
             if self.verbose:
                 rospy.logwarn(f"Cube properties parse error: {e}")
+
+    def detected_objects_callback(self, msg: String):
+        """
+        Phase 2: Receive all detected objects from ZED2 perception node.
+        
+        Expected format (JSON):
+        {
+            'objects': [
+                {
+                    'color': 'red', 
+                    'position': [x, y, z], 
+                    'confidence': 0.95, 
+                    'area': 1500,
+                    'optimal_yaw': 90.0  # 从点云PCA计算出的最优yaw角
+                },
+                ...
+            ],
+            'timestamp': 1234567890.123
+        }
+        """
+        try:
+            import json
+            data = json.loads(msg.data)
+            self.detected_objects_list = data.get('objects', [])
+            
+            if self.verbose and self.detected_objects_list:
+                colors_found = [obj['color'] for obj in self.detected_objects_list]
+                rospy.loginfo(f"🎨 Phase 2 - Detected objects: {colors_found}")
+                # 显示点云计算的最优yaw角
+                for obj in self.detected_objects_list:
+                    if obj.get('optimal_yaw') is not None:
+                        rospy.loginfo(f"   {obj['color']}: optimal_yaw={obj['optimal_yaw']:.0f}°")
+        except Exception as e:
+            rospy.logwarn(f"Detected objects parse error: {e}")
 
     def discover_cubes(self):
         """Discover cubes from Gazebo if not tracked via topic."""
@@ -191,6 +275,138 @@ class V4GraspDemo:
                 return None
         except Exception as e:
             rospy.logerr(f"Error fetching pose for {model_name}: {e}")
+            return None
+    
+    def get_object_pose(self, model_name: str = None) -> Optional[Pose]:
+        """
+        Get object pose from ZED2 or Gazebo.
+        
+        This unified method supports:
+        1. ZED2 perception node (if enabled)
+        2. Gazebo ground truth (fallback)
+        
+        Args:
+            model_name: Model name (only used for Gazebo fallback)
+        
+        Returns:
+            Pose of the object, or None if not found
+        """
+        if self.use_zed2:
+            # Perception-based mode: Return the most recent detected object
+            if self.detected_objects_list:
+                return self.detected_objects_list[0]  # Most recent detection
+        
+        # Fallback: Gazebo ground truth
+        if model_name:
+            return self.fetch_cube_pose(model_name)
+        
+        return None
+
+    def compare_vision_vs_gazebo(self, detected_pos, target_color):
+        """
+        比较视觉检测位置与Gazebo真实位置的偏差。
+        用于调试和验证感知精度。
+        
+        Args:
+            detected_pos: 视觉检测的位置 [x, y, z]
+            target_color: 目标颜色
+        """
+        try:
+            # 查找匹配颜色的Gazebo cube
+            world = self.get_world_properties()
+            color_map = {
+                'red': 'RED',
+                'blue': 'BLUE',
+                'green': 'GREEN',
+                'yellow': 'YELLOW'
+            }
+            
+            target_color_upper = color_map.get(target_color.lower(), target_color.upper())
+            
+            # 找到所有cubes并计算距离
+            closest_cube = None
+            min_distance = float('inf')
+            
+            for model_name in world.model_names:
+                if model_name.startswith("cube_"):
+                    # 获取Gazebo中的真实位置
+                    gazebo_pose = self.fetch_cube_pose(model_name)
+                    if gazebo_pose:
+                        # 计算距离
+                        dx = detected_pos[0] - gazebo_pose.position.x
+                        dy = detected_pos[1] - gazebo_pose.position.y
+                        dz = detected_pos[2] - gazebo_pose.position.z
+                        distance = (dx**2 + dy**2 + dz**2)**0.5
+                        
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_cube = {
+                                'name': model_name,
+                                'pose': gazebo_pose,
+                                'dx': dx,
+                                'dy': dy,
+                                'dz': dz,
+                                'distance': distance
+                            }
+            
+            if closest_cube:
+                # Gazebo返回cube几何中心，Vision返回顶面
+                # 需要调整Gazebo的z坐标以对比顶面
+                gazebo_z_center = closest_cube['pose'].position.z
+                gazebo_z_top = gazebo_z_center + self.cube_height / 2.0  # 顶面
+                
+                # 计算调整后的偏差
+                dx = detected_pos[0] - closest_cube['pose'].position.x
+                dy = detected_pos[1] - closest_cube['pose'].position.y
+                dz_top = detected_pos[2] - gazebo_z_top  # 与顶面对比
+                distance_xy = (dx**2 + dy**2)**0.5
+                
+                rospy.loginfo("="*60)
+                rospy.loginfo("【位置精度对比】Vision vs Gazebo Ground Truth")
+                rospy.loginfo(f"  最近的cube: {closest_cube['name']}")
+                rospy.loginfo(f"  Vision检测（顶面）: ({detected_pos[0]:.4f}, {detected_pos[1]:.4f}, {detected_pos[2]:.4f})")
+                rospy.loginfo(f"  Gazebo中心: ({closest_cube['pose'].position.x:.4f}, {closest_cube['pose'].position.y:.4f}, {gazebo_z_center:.4f})")
+                rospy.loginfo(f"  Gazebo顶面: ({closest_cube['pose'].position.x:.4f}, {closest_cube['pose'].position.y:.4f}, {gazebo_z_top:.4f})")
+                rospy.loginfo(f"  XY平面偏差:")
+                rospy.loginfo(f"    ΔX = {dx*1000:.1f}mm")
+                rospy.loginfo(f"    ΔY = {dy*1000:.1f}mm")
+                rospy.loginfo(f"    XY距离 = {distance_xy*1000:.1f}mm")
+                rospy.loginfo(f"  Z轴偏差（vs顶面）:")
+                rospy.loginfo(f"    ΔZ = {dz_top*1000:.1f}mm")
+                
+                # 评估XY平面精度（更重要）
+                if distance_xy < 0.01:  # <10mm
+                    rospy.loginfo("  ✓✓ XY精度优秀 (<10mm)")
+                elif distance_xy < 0.02:  # <20mm
+                    rospy.loginfo("  ✓ XY精度良好 (10-20mm)")
+                elif distance_xy < 0.05:  # <50mm
+                    rospy.logwarn("  ⚠ XY精度一般 (20-50mm)")
+                else:
+                    rospy.logerr("  ❌ XY精度较差 (>50mm)")
+                rospy.loginfo("="*60)
+                
+        except Exception as e:
+            rospy.logwarn(f"位置对比失败: {e}")
+    
+    def get_object_pose_legacy(self, model_name: str = None) -> Optional[Pose]:
+        """
+        Legacy method for getting object pose.
+        
+        Returns:
+            Pose in panda_link0 frame, or None if not available
+        """
+        if self.use_zed2:
+            if self.current_object_pose is not None:
+                return self.current_object_pose.pose
+            else:
+                rospy.logwarn("⚠ ZED2 pose not yet available, falling back to Gazebo...")
+                if model_name:
+                    return self.fetch_cube_pose(model_name)
+                return None
+        else:
+            # Fallback to Gazebo
+            if model_name:
+                return self.fetch_cube_pose(model_name)
             return None
 
     @staticmethod
@@ -249,7 +465,7 @@ class V4GraspDemo:
         
         return final_yaw
 
-    def build_grasp_poses(self, cube_pose: Pose, custom_yaw: Optional[float] = None) -> Dict[str, Pose]:
+    def build_grasp_poses(self, cube_pose: Pose, custom_yaw: Optional[float] = None, is_vision_data: bool = True) -> Dict[str, Pose]:
         """
         Build grasp poses from cube pose.
         
@@ -262,16 +478,28 @@ class V4GraspDemo:
         Args:
             cube_pose: Cube的当前位姿
             custom_yaw: 可选的自定义yaw角度（如果提供则使用，否则自动计算）
+            is_vision_data: True if input is from vision (z=top surface), False if from Gazebo (z=center)
         
         Returns dict with keys: 'pre', 'grasp', 'lift'
         """
         x = cube_pose.position.x
         y = cube_pose.position.y
-        z_center = cube_pose.position.z  # CRITICAL: Gazebo returns CENTER position, not bottom!
+        z_input = cube_pose.position.z
         
-        # 计算cube的底部和顶部Z坐标
-        z_bottom = z_center - self.cube_half  # 真实底部
-        z_top = z_center + self.cube_half     # 真实顶部
+        # 关键修正：根据数据源调整Z坐标的含义
+        if is_vision_data:
+            # Vision returns TOP surface position, need to convert to center for calculation
+            # z_input = z_top_surface
+            z_top = z_input
+            z_center = z_top - self.cube_half  # 立方体中心 = 顶面 - cube_half
+            z_bottom = z_center - self.cube_half  # 立方体底部 = 中心 - cube_half
+            rospy.loginfo(f"[Height Calc] Vision data: z_top={z_top:.4f} → z_center={z_center:.4f}, z_bottom={z_bottom:.4f}")
+        else:
+            # Gazebo returns CENTER position
+            z_center = z_input
+            z_bottom = z_center - self.cube_half  # 真实底部
+            z_top = z_center + self.cube_half     # 真实顶部
+            rospy.loginfo(f"[Height Calc] Gazebo data: z_center={z_center:.4f}, z_top={z_top:.4f}, z_bottom={z_bottom:.4f}")
         
         # 计算抓取高度：从底部往上grasp_depth_ratio的位置
         # CRITICAL: 这是finger tips应该到达的位置
@@ -602,21 +830,22 @@ class V4GraspDemo:
         rospy.loginfo(f"✓ Placed in {bin_name}")
         return True
 
-    def execute_single_grasp(self, model_name: str, color: str) -> Dict:
+    def execute_single_grasp(self, target_color: str, detected_obj: Optional[Dict] = None) -> Dict:
         """
         执行单次抓取序列。
         
         流程：
-        0. 从gazebo读取cube位置，计算最佳pose避免夹住棱
+        0. 从vision读取cube位置（detected_obj.position）
         1. Pre-location：移动到cube上方10cm
-        2. 在pre-location停留5s，确保零速度，重新读取位置并调整pose
+        2. 在pre-location停留3s，确保零速度（使用初始视觉位置）
         3. 从pre-location缓慢下降到抓取位置（夹爪到cube高度的2/3-1/2），夹紧
         4. 垂直提升50cm
         5. 松开，回到home位置
+        
+        注意：完全依赖视觉模块数据，不查询Gazebo模型状态
         """
         result = {
-            'model_name': model_name,
-            'color': color,
+            'target_color': target_color,
             'success': False,
             'failure_stage': None,
             'elapsed_time': 0.0,
@@ -629,25 +858,41 @@ class V4GraspDemo:
         start_time = time.time()
         
         try:
-            # ===== 步骤0: 从Gazebo读取cube位置 =====
+            # ===== 步骤0: 从vision读取cube位置 =====
             rospy.loginfo("="*60)
-            rospy.loginfo(f"开始抓取: {model_name} ({color})")
+            rospy.loginfo(f"开始抓取: {target_color}")
             rospy.loginfo("="*60)
             
-            cube_pose_initial = self.fetch_cube_pose(model_name)
-            if cube_pose_initial is None:
-                result['failure_stage'] = 'FETCH_POSE'
+            # 使用detected_obj的位置（来自RGB-D感知）
+            if detected_obj and 'position' in detected_obj:
+                detected_pos = detected_obj['position']
+                cube_pose_initial = Pose(
+                    position=Point(detected_pos[0], detected_pos[1], detected_pos[2]),
+                    orientation=Quaternion(0, 0, 0, 1)
+                )
+                result['cube_x'] = detected_pos[0]
+                result['cube_y'] = detected_pos[1]
+                result['cube_z'] = detected_pos[2]
+                rospy.loginfo(f"步骤0: 使用RGB-D检测位置 ({detected_pos[0]:.3f}, {detected_pos[1]:.3f}, {detected_pos[2]:.3f})")
+                
+                # 【调试】与Gazebo真实位置对比
+                self.compare_vision_vs_gazebo(detected_pos, target_color)
+                
+            else:
+                rospy.logerr("❌ No detected object provided - cannot proceed without vision position")
+                result['failure_stage'] = 'NO_DETECTION'
                 return result
             
-            result['cube_x'] = cube_pose_initial.position.x
-            result['cube_y'] = cube_pose_initial.position.y
-            result['cube_z'] = cube_pose_initial.position.z
-            
-            rospy.loginfo(f"步骤0: 读取cube初始位置 ({cube_pose_initial.position.x:.3f}, {cube_pose_initial.position.y:.3f}, {cube_pose_initial.position.z:.3f})")
-            
-            # 计算初步的最优yaw角度（避免夹住棱）
-            optimal_yaw = self.compute_optimal_grasp_yaw(cube_pose_initial)
-            rospy.loginfo(f"步骤0: 计算最优抓取角度 yaw={math.degrees(optimal_yaw):.0f}° (避免夹住棱)")
+            # 优先使用点云计算的最优yaw，如果无可用则计算
+            if detected_obj and detected_obj.get('optimal_yaw') is not None:
+                # 从点云PCA计算的最优yaw（已对齐到0/90/180/270）
+                optimal_yaw_deg = detected_obj['optimal_yaw']
+                optimal_yaw = math.radians(optimal_yaw_deg)
+                rospy.loginfo(f"步骤0: 使用点云计算的最优抓取角度 yaw={optimal_yaw_deg:.0f}° (PCA避免夹住棱)")
+            else:
+                # 备选方案：基于cube位置计算
+                optimal_yaw = self.compute_optimal_grasp_yaw(cube_pose_initial)
+                rospy.loginfo(f"步骤0: 计算最优抓取角度 yaw={math.degrees(optimal_yaw):.0f}° (位置分析避免夹住棱)")
             
             # ===== 步骤1: 移动到Pre-location (cube上方10cm) =====
             rospy.loginfo("\n步骤1: 移动到Pre-location (cube上方10cm)")
@@ -659,9 +904,15 @@ class V4GraspDemo:
             self.open_gripper()
             
             # 计算pre-location位姿（使用初步计算的yaw）
-            z_bottom = cube_pose_initial.position.z
-            z_grasp_initial = z_bottom + self.cube_height * self.grasp_depth_ratio
-            z_pre = z_grasp_initial + self.pre_height
+            # 注意：detected_pos.z 是cube顶面中心点（从相机视角测得）
+            # cube_height = 0.045m (45mm)
+            # 需要计算抓取高度和pre-location高度
+            z_top = cube_pose_initial.position.z  # cube顶面（视觉检测）
+            z_bottom = z_top - self.cube_height  # cube底面
+            z_grasp_initial = z_bottom + self.cube_height * self.grasp_depth_ratio  # 抓取深度
+            z_pre = z_top + self.pre_height  # pre-location：顶面上方15cm
+            
+            rospy.loginfo(f"高度计算: z_top={z_top:.3f}, z_bottom={z_bottom:.3f}, z_grasp={z_grasp_initial:.3f}, z_pre={z_pre:.3f}")
             
             pre_pose_initial = Pose(
                 position=Point(cube_pose_initial.position.x, cube_pose_initial.position.y, z_pre),
@@ -680,31 +931,27 @@ class V4GraspDemo:
             
             rospy.loginfo(f"✓ 到达Pre-location: z={z_pre:.3f}m (cube上方{self.pre_height*100:.0f}cm)")
             
-            # ===== 步骤2: 在Pre-location停留5s，确保零速度 =====
+            # ===== 步骤2: 在Pre-location停留，确保零速度 =====
             rospy.loginfo(f"\n步骤2: 在Pre-location停留{self.dwell_time}秒，确保机器人完全稳定")
             self.group.stop()  # 确保停止所有运动
             rospy.sleep(self.dwell_time)
             rospy.loginfo("✓ 机器人已稳定，速度归零")
             
-            # 重新读取cube位置（此时应该更准确）
-            rospy.loginfo("步骤2: 重新读取cube位置并调整pose...")
-            cube_pose_stable = self.fetch_cube_pose(model_name)
-            if cube_pose_stable is None:
-                result['failure_stage'] = 'FETCH_STABLE_POSE'
-                return result
+            # 使用初始的视觉检测位置（物体在抓取前不会移动）
+            rospy.loginfo("步骤2: 使用视觉检测的cube位置（vision-only模式）")
+            cube_pose_stable = cube_pose_initial  # 复用步骤0的视觉位置
             
-            # 更新记录的cube位置
-            result['cube_x'] = cube_pose_stable.position.x
-            result['cube_y'] = cube_pose_stable.position.y
-            result['cube_z'] = cube_pose_stable.position.z
+            # 如果需要更新yaw角度，可以重新计算（但位置保持不变）
+            if detected_obj and detected_obj.get('optimal_yaw') is not None:
+                optimal_yaw_stable = optimal_yaw  # 使用步骤0的点云yaw
+            else:
+                optimal_yaw_stable = self.compute_optimal_grasp_yaw(cube_pose_stable)
             
-            # 重新计算最优yaw（基于稳定后的cube位置）
-            optimal_yaw_stable = self.compute_optimal_grasp_yaw(cube_pose_stable)
-            rospy.loginfo(f"步骤2: 调整后的最优角度 yaw={math.degrees(optimal_yaw_stable):.0f}°")
+            rospy.loginfo(f"步骤2: 确认抓取角度 yaw={math.degrees(optimal_yaw_stable):.0f}°")
             
-            # 基于稳定的cube位置计算精确的抓取poses
-            poses = self.build_grasp_poses(cube_pose_stable, custom_yaw=optimal_yaw_stable)
-            rospy.loginfo("✓ Pose已调整，准备下降")
+            # 基于视觉位置计算精确的抓取poses（明确指定是视觉数据）
+            poses = self.build_grasp_poses(cube_pose_stable, custom_yaw=optimal_yaw_stable, is_vision_data=True)
+            rospy.loginfo("✓ Pose已确认，准备下降")
             
             # ===== 步骤3: 从Pre-location缓慢下降到抓取位置并夹紧 =====
             rospy.loginfo(f"\n步骤3: 缓慢下降到抓取位置 (cube高度的{self.grasp_depth_ratio*100:.0f}%)")
@@ -800,34 +1047,130 @@ class V4GraspDemo:
         
         return result
 
+    def run_sorting_loop(self):
+        """
+        Phase 2: Run continuous sorting loop based on ZED2 multi-color detection.
+        
+        Workflow:
+        1. Detect all colored objects from ZED2
+        2. Filter by target_color
+        3. Pick and place to corresponding bin
+        4. Continue until user interrupts
+        """
+        rospy.loginfo("\n" + "="*60)
+        rospy.loginfo("🎨 PHASE 2: Color Sorting Loop Started")
+        rospy.loginfo("="*60)
+        rospy.loginfo(f"Target color: {self.target_color}")
+        rospy.loginfo(f"Subscribe to '/target_color' to change color")
+        rospy.loginfo("Press Ctrl-C to stop")
+        rospy.loginfo("="*60 + "\n")
+        
+        trial_count = 0
+        
+        try:
+            while not rospy.is_shutdown():
+                # Get detected objects
+                if not self.detected_objects_list:
+                    rospy.loginfo(f"⏳ Waiting for {self.target_color} objects...")
+                    rospy.sleep(1.0)
+                    continue
+                
+                # Filter by target color
+                target_objects = [obj for obj in self.detected_objects_list 
+                                if obj['color'].lower() == self.target_color.lower()]
+                
+                if not target_objects:
+                    rospy.loginfo(f"⏳ No {self.target_color} objects detected, waiting...")
+                    rospy.sleep(1.0)
+                    continue
+                
+                # Select the largest/most confident object
+                target_obj = max(target_objects, key=lambda o: o['confidence'])
+                trial_count += 1
+                
+                rospy.loginfo("\n" + "="*60)
+                rospy.loginfo(f"SORT {trial_count}: Detected {target_obj['color'].upper()}")
+                rospy.loginfo("="*60)
+                # Log result
+                rospy.loginfo(f"Position: ({target_obj['position'][0]:.3f}, "
+                            f"{target_obj['position'][1]:.3f}, "
+                            f"{target_obj['position'][2]:.3f})")
+                rospy.loginfo(f"Confidence: {target_obj['confidence']:.2f}")
+                if target_obj.get('optimal_yaw') is not None:
+                    rospy.loginfo(f"Point Cloud Yaw: {target_obj['optimal_yaw']:.0f}°")
+                
+                # Execute grasp using the detected position
+                result = self.execute_single_grasp(target_obj['color'], detected_obj=target_obj)
+                result['trial_num'] = trial_count
+                self.results.append(result)
+                
+                # Log result
+                status = "✓ SUCCESS" if result['success'] else f"✗ FAILED at {result['failure_stage']}"
+                rospy.loginfo(f"Result: {status} (time={result['elapsed_time']:.1f}s)")
+                
+                # Clear detected objects to wait for new detections
+                self.detected_objects_list = []
+                
+                # Brief pause between operations
+                if not rospy.is_shutdown():
+                    rospy.sleep(0.5)
+        
+        except KeyboardInterrupt:
+            rospy.loginfo("\n🛑 Sorting loop interrupted by user")
+        
+        # Save results
+        if self.results:
+            self.save_results()
+            self.print_summary()
+
     def run_trials(self):
         """Run all trials."""
         rospy.loginfo("\n" + "="*60)
         rospy.loginfo(f"Starting {self.num_trials} trials")
         rospy.loginfo("="*60)
         
-        # Get available cubes
-        available_cubes = list(self.cube_colors.keys())
-        if not available_cubes:
-            rospy.logerr("No cubes available!")
-            return
+        # Wait for detected objects from ZED2 perception
+        max_wait = 5  # seconds
+        start_time = rospy.get_time()
+        rospy.loginfo("⏳ Waiting for detected objects from ZED2...")
         
-        rospy.loginfo(f"Available cubes: {available_cubes}")
+        while not self.detected_objects_list and (rospy.get_time() - start_time) < max_wait:
+            rospy.sleep(0.1)
+        
+        # Extract unique colors from detected objects
+        if self.detected_objects_list:
+            available_colors = list(set([obj['color'] for obj in self.detected_objects_list]))
+            rospy.loginfo(f"✅ Detected objects: {available_colors}")
+        else:
+            rospy.logerr(f"❌ FATAL: No objects detected from ZED2 after {max_wait}s")
+            rospy.logerr("   Check: rostopic echo /detected_objects")
+            return
         
         for trial_num in range(1, self.num_trials + 1):
             rospy.loginfo("\n" + "="*60)
             rospy.loginfo(f"TRIAL {trial_num}/{self.num_trials}")
             rospy.loginfo("="*60)
             
-            # Select cube (round-robin)
-            cube_idx = (trial_num - 1) % len(available_cubes)
-            model_name = available_cubes[cube_idx]
-            color = self.cube_colors[model_name]
+            # Select color (round-robin from detected colors)
+            color_idx = (trial_num - 1) % len(available_colors)
+            target_color = available_colors[color_idx]
             
-            rospy.loginfo(f"Target: {model_name} (Color: {color})")
+            rospy.loginfo(f"Target color: {target_color}")
             
-            # Execute grasp
-            result = self.execute_single_grasp(model_name, color)
+            # Find matching detected object from vision
+            detected_obj = None
+            if self.detected_objects_list:
+                matching_objs = [obj for obj in self.detected_objects_list 
+                               if obj['color'].lower() == target_color.lower()]
+                if matching_objs:
+                    # Use the one with highest confidence
+                    detected_obj = max(matching_objs, key=lambda o: o.get('confidence', 0))
+                    rospy.loginfo(f"  📊 Using vision detection at position: ({detected_obj['position'][0]:.3f}, {detected_obj['position'][1]:.3f}, {detected_obj['position'][2]:.3f})")
+                    if detected_obj.get('optimal_yaw') is not None:
+                        rospy.loginfo(f"  📊 Point Cloud Yaw: {detected_obj['optimal_yaw']:.0f}°")
+            
+            # Execute grasp with vision-based position
+            result = self.execute_single_grasp(target_color, detected_obj=detected_obj)
             result['trial_num'] = trial_num
             self.results.append(result)
             
@@ -849,7 +1192,7 @@ class V4GraspDemo:
             return
         
         with open(self.output_csv, 'w', newline='') as f:
-            fieldnames = ['trial_num', 'model_name', 'color', 'success', 'failure_stage', 
+            fieldnames = ['trial_num', 'target_color', 'success', 'failure_stage', 
                          'elapsed_time', 'cube_x', 'cube_y', 'cube_z', 'placed_in_bin']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -899,6 +1242,7 @@ def parse_args():
     parser.add_argument("--trials", type=int, default=10, help="Number of trials")
     parser.add_argument("--enable-place", action="store_true", help="Enable place-to-bin")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
+    parser.add_argument("--zed2", action="store_true", help="Use ZED2 perception (Phase 1)")
     return parser.parse_args()
 
 
