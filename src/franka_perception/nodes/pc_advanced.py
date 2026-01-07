@@ -12,63 +12,79 @@ import numpy as np
 import open3d as o3d
 
 
-def smart_plane_removal(pc, ransac_dist, plane_z_buffer=0.01):
+def smart_plane_removal(pc, ransac_dist=0.005, plane_z_buffer=0.002):
     """
-    智能桌面去除：
-    1. 拟合桌面平面
-    2. 提取平面上方的点
-    3. 应用高度带通滤波
+    智能桌面去除（RANSAC平面分割）：
+    1. RANSAC平面拟合 - 找到桌面
+    2. 移除平面inliers
+    3. 只保留桌面上方 [2mm, 80mm] 的点
     
     Args:
         pc: Open3D点云
-        ransac_dist: RANSAC距离阈值
-        plane_z_buffer: 桌面上方保留的距离（米）
+        ransac_dist: RANSAC距离阈值（默认5mm）
+        plane_z_buffer: 离平面的最小距离（默认2mm）
     
     Returns:
         filtered_pc: 过滤后的点云
         plane_model: 桌面平面模型 [a, b, c, d]
+        plane_inliers: 平面inlier的索引
     """
     points = np.asarray(pc.points)
     
     if len(points) < 10:
-        return pc, None
+        return pc, None, []
     
-    # Step 1: 拟合桌面平面（RANSAC）
-    plane_model, inliers = pc.segment_plane(
-        distance_threshold=ransac_dist,
-        ransac_n=3,
-        num_iterations=1000
-    )
+    # Step 1: RANSAC平面拟合
+    try:
+        plane_model, inliers = pc.segment_plane(
+            distance_threshold=ransac_dist,
+            ransac_n=3,
+            num_iterations=1000
+        )
+    except:
+        return pc, None, []
+    
+    if len(inliers) < 5:
+        return pc, None, []
     
     [a, b, c, d] = plane_model
     
-    # Step 2: 计算点到平面的距离
-    # 平面方程: ax + by + cz + d = 0
-    # 距离 = |ax + by + cz + d| / sqrt(a^2 + b^2 + c^2)
+    # Step 2: 计算所有点到平面的有符号距离
     plane_normal = np.array([a, b, c])
-    plane_normal_normalized = plane_normal / np.linalg.norm(plane_normal)
+    plane_norm = np.linalg.norm(plane_normal)
+    plane_normal_normalized = plane_normal / plane_norm
     
-    distances_to_plane = np.abs(np.dot(points, plane_normal_normalized) + d)
+    # 有符号距离（点在平面上方为正）
+    signed_distances = np.dot(points, plane_normal_normalized) + d / plane_norm
     
-    # Step 3: 移除桌面点（距离 < plane_z_buffer）
-    table_mask = distances_to_plane > plane_z_buffer
+    # Step 3: 只保留 [plane_z_buffer, 0.08] 范围内的点（离桌面2-80mm）
+    # cube高度是45mm，加buffer后最多80mm
+    height_min = plane_z_buffer
+    height_max = 0.08  # 80mm
     
-    # Step 4: 获取桌面上方的点
-    above_plane_pc = pc.select_by_index(np.where(table_mask)[0])
+    height_mask = (signed_distances >= height_min) & (signed_distances <= height_max)
     
-    return above_plane_pc, plane_model
+    if np.sum(height_mask) == 0:
+        return pc, None, []
+    
+    # Step 4: 获取过滤后的点云
+    filtered_indices = np.where(height_mask)[0]
+    filtered_pc = pc.select_by_index(filtered_indices.tolist())
+    
+    return filtered_pc, plane_model, inliers
 
 
-def height_bandpass_filter(pc, plane_model, cube_height=0.045, buffer=0.01):
+def height_bandpass_filter(pc, plane_model, height_min=0.002, height_max=0.080):
     """
-    高度带通滤波：
-    只保留 plane_上方 到 plane_上方+height 范围内的点
+    高度带通滤波（在平面上方）：
+    只保留 [height_min, height_max] 范围内的点
+    默认：离桌面 2mm - 80mm（cube高45mm + 额外buffer）
     
     Args:
         pc: Open3D点云
         plane_model: 桌面平面模型 [a, b, c, d]
-        cube_height: cube高度（0.045m）
-        buffer: 额外缓冲（上下各加一点）
+        height_min: 最小高度（米，默认2mm）
+        height_max: 最大高度（米，默认80mm）
     
     Returns:
         filtered_pc: 过滤后的点云
@@ -79,57 +95,76 @@ def height_bandpass_filter(pc, plane_model, cube_height=0.045, buffer=0.01):
     points = np.asarray(pc.points)
     [a, b, c, d] = plane_model
     
-    # 计算点到平面的距离
+    # 计算点到平面的有符号距离
     plane_normal = np.array([a, b, c])
-    plane_normal_normalized = plane_normal / np.linalg.norm(plane_normal)
+    plane_norm = np.linalg.norm(plane_normal)
+    plane_normal_normalized = plane_normal / plane_norm
     
-    distances_to_plane = np.dot(points, plane_normal_normalized) + d / np.linalg.norm(plane_normal)
+    signed_distances = np.dot(points, plane_normal_normalized) + d / plane_norm
     
-    # 高度带通：[buffer, cube_height + buffer]
-    height_min = buffer
-    height_max = cube_height + buffer
-    
-    height_mask = (distances_to_plane >= height_min) & (distances_to_plane <= height_max)
+    # 高度带通：[height_min, height_max]
+    height_mask = (signed_distances >= height_min) & (signed_distances <= height_max)
     
     if np.sum(height_mask) == 0:
         return pc  # 没有点符合条件，返回原始点云
     
-    return pc.select_by_index(np.where(height_mask)[0])
+    return pc.select_by_index(np.where(height_mask)[0].tolist())
 
 
-def validate_icp_result(icp_result, min_fitness=0.5, max_rmse=0.02):
+def validate_icp_result(icp_result, max_correspondence_distance=0.015, 
+                        min_correspondence_count=30, max_rmse=0.012):
     """
-    验证ICP结果的质量
+    验证ICP结果的质量（新方案）
+    
+    不再依赖fitness=1.0（没有意义），改用：
+    - correspondence_set 的数量（>= min_correspondence_count）
+    - inlier RMSE（<= max_rmse）
+    - correspondence distance 限制
     
     Args:
         icp_result: ICP注册结果
-        min_fitness: 最小fitness阈值
-        max_rmse: 最大RMSE阈值
+        max_correspondence_distance: 最大对应点距离（默认1.5cm）
+        min_correspondence_count: 最小对应点数（默认30）
+        max_rmse: 最大RMSE（默认1.2cm）
     
     Returns:
         is_valid: 是否有效
         quality_score: 0-1的质量分数
-        reason: 验证失败原因（如果有）
+        reasons: 验证失败原因列表
     """
-    fitness = icp_result.fitness
+    
+    # 提取关键指标
+    correspondence_set = icp_result.correspondence_set
+    correspondence_count = len(correspondence_set) if correspondence_set is not None else 0
     rmse = icp_result.inlier_rmse
+    fitness = icp_result.fitness  # 仅作参考
     
-    # 计算质量分数（综合指标）
-    fitness_score = min(fitness / 0.8, 1.0)  # normalize to 0.8
-    rmse_score = max(1.0 - (rmse / max_rmse), 0.0) if rmse > 0 else 1.0
-    
-    quality_score = (fitness_score + rmse_score) / 2.0
+    # 计算平均correspondence距离
+    avg_correspondence_dist = 0
+    if correspondence_count > 0:
+        # correspondence_set的每个元素是 [src_idx, tgt_idx]
+        # 这里简化：用RMSE作为代理
+        avg_correspondence_dist = rmse
     
     # 验证规则
     reasons = []
     
-    if fitness < min_fitness:
-        reasons.append(f"low_fitness({fitness:.3f}<{min_fitness})")
+    if correspondence_count < min_correspondence_count:
+        reasons.append(f"low_correspondence({correspondence_count}<{min_correspondence_count})")
+    
+    if avg_correspondence_dist > max_correspondence_distance:
+        reasons.append(f"high_corr_dist({avg_correspondence_dist:.4f}>{max_correspondence_distance})")
     
     if rmse > max_rmse:
         reasons.append(f"high_rmse({rmse:.4f}>{max_rmse})")
     
     is_valid = len(reasons) == 0
+    
+    # 计算质量分数
+    corr_score = min(correspondence_count / (min_correspondence_count * 2), 1.0)  # normalize
+    rmse_score = max(1.0 - (rmse / (max_rmse * 2)), 0.0)
+    
+    quality_score = (corr_score + rmse_score) / 2.0
     
     return is_valid, quality_score, reasons
 
@@ -137,29 +172,31 @@ def validate_icp_result(icp_result, min_fitness=0.5, max_rmse=0.02):
 # 测试函数
 def test_icp_validation():
     """测试ICP验证函数"""
-    print("ICP 质量验证测试")
+    print("ICP 质量验证测试（新方案：基于correspondence和RMSE）")
     print("=" * 60)
     
     # 模拟ICP结果
     class FakeResult:
-        def __init__(self, fitness, rmse):
-            self.fitness = fitness
+        def __init__(self, correspondence_count, rmse, fitness=None):
+            self.correspondence_set = [(i, i) for i in range(correspondence_count)]
             self.inlier_rmse = rmse
+            self.fitness = fitness if fitness else (1.0 if rmse < 0.01 else 0.5)
     
     test_cases = [
-        (1.0, 0.001, "完美配准"),
-        (0.8, 0.015, "好的配准"),
-        (0.5, 0.025, "临界配准"),
-        (0.3, 0.050, "差的配准"),
+        (150, 0.005, "完美配准"),
+        (100, 0.010, "好的配准"),
+        (50, 0.012, "临界配准"),
+        (30, 0.015, "边界配准"),
+        (20, 0.020, "差的配准"),
     ]
     
-    for fitness, rmse, label in test_cases:
-        result = FakeResult(fitness, rmse)
+    for corr_count, rmse, label in test_cases:
+        result = FakeResult(corr_count, rmse)
         is_valid, score, reasons = validate_icp_result(result)
         
         status = "✓" if is_valid else "✗"
         print(f"\n{status} {label}")
-        print(f"  Fitness: {fitness:.3f}, RMSE: {rmse:.4f}")
+        print(f"  Correspondence: {corr_count}, RMSE: {rmse:.4f}")
         print(f"  质量分数: {score:.3f}")
         if reasons:
             print(f"  失败原因: {', '.join(reasons)}")
