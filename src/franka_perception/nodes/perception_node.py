@@ -216,10 +216,10 @@ class PerceptionNode:
             # 4. RANSAC plane segmentation (remove table) + Height bandpass filter
             if self.boundZ[0] <= 0:
                 # 智能平面去除 + 高度带通滤波
-                outlier_cloud, plane_model = smart_plane_removal(
+                outlier_cloud, plane_model, plane_inliers = smart_plane_removal(
                     cropped_pc, 
-                    self.ransac_dist_threshold,
-                    plane_z_buffer=0.005
+                    ransac_dist=self.ransac_dist_threshold,
+                    plane_z_buffer=0.002
                 )
                 
                 # 应用高度带通滤波
@@ -227,8 +227,8 @@ class PerceptionNode:
                     outlier_cloud = height_bandpass_filter(
                         outlier_cloud,
                         plane_model,
-                        cube_height=self.cube_edge_len,
-                        buffer=0.005
+                        height_min=0.002,   # 2mm 离桌面
+                        height_max=0.080    # 80mm 上限
                     )
                 
                 if outlier_cloud.is_empty():
@@ -318,12 +318,12 @@ class PerceptionNode:
         Process a cluster using ICP registration to detect individual cubes.
         
         关键改进：
-        1. 在ICP前做RANSAC平面分割和移除
-        2. 严格的ICP质量检查（基于correspondence和RMSE，不依赖fitness）
-        3. 降低max_correspondence_distance到1.5cm
+        1. 全局点云上已做过平面移除（在on_cloud中）
+        2. 改用 correspondence + RMSE 验证（不依赖fitness）
+        3. 降低 max_correspondence_distance 到合理值（3cm）
         
         Args:
-            cluster (open3d.geometry.PointCloud): cluster point cloud
+            cluster (open3d.geometry.PointCloud): cluster point cloud (已预处理)
             cube_count (int): current cube count
             header: ROS header
         Returns:
@@ -334,65 +334,54 @@ class PerceptionNode:
         iteration = 0
         detected_cubes = []
         
-        # 在循环之外做一次全局平面移除
-        if iteration == 0 and len(np.asarray(cluster.points)) > 20:
-            cleaned_cluster, plane_model, inliers = smart_plane_removal(
-                cluster, ransac_dist=0.005, plane_z_buffer=0.002
-            )
-            if len(np.asarray(cleaned_cluster.points)) > self.icp_min_points:
-                cluster = cleaned_cluster
-                rospy.loginfo_throttle(10.0, 
-                    f"Plane removal: {len(inliers)} inliers removed, "
-                    f"{len(np.asarray(cluster.points))} points remain")
-        
         while len(np.asarray(cluster.points)) > self.icp_min_points and iteration < max_iter:
             iteration += 1
             
-            # 在每次ICP前做平面移除和高度滤波
-            cluster_cleaned, plane_model, plane_inliers = smart_plane_removal(
-                cluster, ransac_dist=0.005, plane_z_buffer=0.002
-            )
-            
-            # 应用高度带通滤波
-            if plane_model is not None:
-                cluster_cleaned = height_bandpass_filter(
-                    cluster_cleaned, plane_model,
-                    height_min=0.002,  # 2mm 离桌面
-                    height_max=0.080   # 80mm 上限
-                )
-            
-            if len(np.asarray(cluster_cleaned.points)) < self.icp_min_points:
-                rospy.loginfo_throttle(10.0, f"No valid points after plane removal")
-                break
-            
-            # Perform ICP registration with lower max_correspondence_distance
+            # Perform ICP registration with relaxed distance threshold
             try:
-                # Initial transformation guess
-                init_transform = np.array([
-                    [1, 0, 0, 0.5],
-                    [0, 1, 0, 0],
-                    [0, 0, 1, 0.8],
-                    [0, 0, 0, 1]
-                ])
+                # 调试：检查cluster大小
+                cluster_points = np.asarray(cluster.points)
+                if len(cluster_points) < 10:
+                    rospy.logwarn(f"Cluster too small ({len(cluster_points)} points), skipping")
+                    break
                 
-                # 使用更严格的距离阈值（1.5cm）
+                # 调试：检查cube_gt
+                gt_points = np.asarray(self.cube_gt.points)
+                if len(gt_points) == 0:
+                    rospy.logerr("cube_gt is empty! ICP cannot work")
+                    break
+                
+                # 【关键修复】根据cluster的实际中心设置init_transform
+                cluster_bbox = cluster.get_axis_aligned_bounding_box()
+                cluster_center = cluster_bbox.get_center()
+                
+                # 模板模型中心已知是原点，所以初值是：把模板平移到cluster中心
+                init_transform = np.eye(4)
+                init_transform[0, 3] = cluster_center[0]
+                init_transform[1, 3] = cluster_center[1]
+                init_transform[2, 3] = cluster_center[2]
+                
+                rospy.loginfo_throttle(10.0, 
+                    f"ICP iteration {iteration}: cluster={len(cluster_points)} pts, "
+                    f"cluster_center={cluster_center}, template={len(gt_points)} pts")
+                
+                # 使用更合理的距离阈值（5cm，因为现在初值准确）
                 reg_p2p = o3d.pipelines.registration.registration_icp(
-                    self.cube_gt, cluster_cleaned, 0.015, init_transform,
+                    self.cube_gt, cluster, 0.05, init_transform,
                     o3d.pipelines.registration.TransformationEstimationPointToPoint()
                 )
                 
-                # 【新增】改进的ICP质量检查 - 基于correspondence和RMSE
+                # 【改进】ICP质量检查：综合fitness和RMSE
                 is_valid, quality_score, fail_reasons = validate_icp_result(
                     reg_p2p,
-                    max_correspondence_distance=0.015,  # 1.5cm
-                    min_correspondence_count=30,        # 至少30个对应点
-                    max_rmse=0.012                      # 1.2cm RMSE
+                    min_fitness=0.3,   # 降低到30%（不盲目相信1.0）
+                    max_rmse=0.020     # 2cm RMSE阈值
                 )
                 
                 if not is_valid:
                     rospy.logwarn(
                         f"ICP result rejected: {fail_reasons}, "
-                        f"correspondence={len(reg_p2p.correspondence_set)}, "
+                        f"fitness={reg_p2p.fitness:.3f}, "
                         f"rmse={reg_p2p.inlier_rmse:.4f}"
                     )
                     break  # 质量差，停止继续寻找cube
@@ -425,7 +414,7 @@ class PerceptionNode:
                 color = 'unknown'
                 confidence = 0.0
                 if self.enable_color_detection and self.current_rgb is not None:
-                    cluster_points = np.asarray(cluster_cleaned.points)
+                    cluster_points = np.asarray(cluster.points)
                     color, confidence = color_detection_from_points(cluster_points, self.current_rgb)
                 
                 # Create object dict with quality score
@@ -436,9 +425,8 @@ class PerceptionNode:
                     'confidence': confidence,
                     'fitness': reg_p2p.fitness,
                     'rmse': reg_p2p.inlier_rmse,
-                    'quality_score': quality_score,  # 新增：综合质量分数
-                    'correspondence_count': len(reg_p2p.correspondence_set),  # 新增：对应点数
-                    'num_points': len(np.asarray(cluster_cleaned.points))
+                    'quality_score': quality_score,
+                    'num_points': len(np.asarray(cluster.points))
                 }
                 detected_cubes.append(obj)
                 

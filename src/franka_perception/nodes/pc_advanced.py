@@ -111,21 +111,19 @@ def height_bandpass_filter(pc, plane_model, height_min=0.002, height_max=0.080):
     return pc.select_by_index(np.where(height_mask)[0].tolist())
 
 
-def validate_icp_result(icp_result, max_correspondence_distance=0.015, 
-                        min_correspondence_count=30, max_rmse=0.012):
+def validate_icp_result(icp_result, min_fitness=0.3, max_rmse=0.020):
     """
-    验证ICP结果的质量（新方案）
+    验证ICP结果的质量（改进方案）
     
-    不再依赖fitness=1.0（没有意义），改用：
-    - correspondence_set 的数量（>= min_correspondence_count）
-    - inlier RMSE（<= max_rmse）
-    - correspondence distance 限制
+    改进点：
+    - 综合使用 fitness + RMSE（两者都要通过）
+    - 不盲目相信 fitness=1.0（但仍然需要满足最低门槛）
+    - correspondence_set 作为辅助参考（可能不可用）
     
     Args:
         icp_result: ICP注册结果
-        max_correspondence_distance: 最大对应点距离（默认1.5cm）
-        min_correspondence_count: 最小对应点数（默认30）
-        max_rmse: 最大RMSE（默认1.2cm）
+        min_fitness: 最小fitness阈值（默认0.3）
+        max_rmse: 最大RMSE阈值（默认2cm）
     
     Returns:
         is_valid: 是否有效
@@ -134,37 +132,31 @@ def validate_icp_result(icp_result, max_correspondence_distance=0.015,
     """
     
     # 提取关键指标
-    correspondence_set = icp_result.correspondence_set
-    correspondence_count = len(correspondence_set) if correspondence_set is not None else 0
+    fitness = icp_result.fitness
     rmse = icp_result.inlier_rmse
-    fitness = icp_result.fitness  # 仅作参考
     
-    # 计算平均correspondence距离
-    avg_correspondence_dist = 0
-    if correspondence_count > 0:
-        # correspondence_set的每个元素是 [src_idx, tgt_idx]
-        # 这里简化：用RMSE作为代理
-        avg_correspondence_dist = rmse
+    # 尝试获取correspondence信息（可能不可用）
+    correspondence_set = getattr(icp_result, 'correspondence_set', None)
+    correspondence_count = len(correspondence_set) if correspondence_set is not None else 0
     
-    # 验证规则
+    # 验证规则（综合fitness和RMSE）
     reasons = []
     
-    if correspondence_count < min_correspondence_count:
-        reasons.append(f"low_correspondence({correspondence_count}<{min_correspondence_count})")
-    
-    if avg_correspondence_dist > max_correspondence_distance:
-        reasons.append(f"high_corr_dist({avg_correspondence_dist:.4f}>{max_correspondence_distance})")
+    if fitness < min_fitness:
+        reasons.append(f"low_fitness({fitness:.3f}<{min_fitness})")
     
     if rmse > max_rmse:
         reasons.append(f"high_rmse({rmse:.4f}>{max_rmse})")
     
     is_valid = len(reasons) == 0
     
-    # 计算质量分数
-    corr_score = min(correspondence_count / (min_correspondence_count * 2), 1.0)  # normalize
-    rmse_score = max(1.0 - (rmse / (max_rmse * 2)), 0.0)
+    # 计算质量分数（综合指标）
+    # fitness 贡献：0-1（normalize到0.8）
+    fitness_score = min(fitness / 0.8, 1.0)
+    # rmse 贡献：高RMSE则低分
+    rmse_score = max(1.0 - (rmse / (max_rmse * 1.5)), 0.0)
     
-    quality_score = (corr_score + rmse_score) / 2.0
+    quality_score = (fitness_score + rmse_score) / 2.0
     
     return is_valid, quality_score, reasons
 
@@ -172,31 +164,31 @@ def validate_icp_result(icp_result, max_correspondence_distance=0.015,
 # 测试函数
 def test_icp_validation():
     """测试ICP验证函数"""
-    print("ICP 质量验证测试（新方案：基于correspondence和RMSE）")
+    print("ICP 质量验证测试（fitness + RMSE）")
     print("=" * 60)
     
     # 模拟ICP结果
     class FakeResult:
-        def __init__(self, correspondence_count, rmse, fitness=None):
-            self.correspondence_set = [(i, i) for i in range(correspondence_count)]
+        def __init__(self, fitness, rmse):
+            self.fitness = fitness
             self.inlier_rmse = rmse
-            self.fitness = fitness if fitness else (1.0 if rmse < 0.01 else 0.5)
+            self.correspondence_set = None
     
     test_cases = [
-        (150, 0.005, "完美配准"),
-        (100, 0.010, "好的配准"),
-        (50, 0.012, "临界配准"),
-        (30, 0.015, "边界配准"),
-        (20, 0.020, "差的配准"),
+        (1.0, 0.005, "完美配准"),
+        (0.8, 0.010, "好的配准"),
+        (0.5, 0.015, "中等配准"),
+        (0.3, 0.020, "临界配准"),
+        (0.1, 0.030, "差的配准"),
     ]
     
-    for corr_count, rmse, label in test_cases:
-        result = FakeResult(corr_count, rmse)
+    for fitness, rmse, label in test_cases:
+        result = FakeResult(fitness, rmse)
         is_valid, score, reasons = validate_icp_result(result)
         
         status = "✓" if is_valid else "✗"
         print(f"\n{status} {label}")
-        print(f"  Correspondence: {corr_count}, RMSE: {rmse:.4f}")
+        print(f"  Fitness: {fitness:.3f}, RMSE: {rmse:.4f}")
         print(f"  质量分数: {score:.3f}")
         if reasons:
             print(f"  失败原因: {', '.join(reasons)}")
