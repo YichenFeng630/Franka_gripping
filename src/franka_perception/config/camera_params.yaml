@@ -1,0 +1,59 @@
+# Camera Parameters for ZED2
+
+# ZED2 Camera Intrinsics (default values, should be calibrated for your camera)
+# These are typical values for ZED2 at HD720 resolution
+
+camera_info:
+  # Image dimensions
+  image_width: 1280
+  image_height: 720
+  
+  # Camera matrix (3x3)
+  # [fx  0  cx]
+  # [0  fy  cy]
+  # [0   0   1]
+  camera_matrix:
+    fx: 700.0    # Focal length X
+    fy: 700.0    # Focal length Y
+    cx: 640.0    # Principal point X (image center)
+    cy: 360.0    # Principal point Y (image center)
+  
+  # Distortion coefficients [k1, k2, p1, p2, k3]
+  distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0]
+  
+  # Rectification matrix (3x3) - Identity for monocular
+  rectification_matrix: [1.0, 0.0, 0.0,
+                         0.0, 1.0, 0.0,
+                         0.0, 0.0, 1.0]
+  
+  # Projection matrix (3x4)
+  projection_matrix: [700.0, 0.0, 640.0, 0.0,
+                      0.0, 700.0, 360.0, 0.0,
+                      0.0, 0.0, 1.0, 0.0]
+
+# Depth sensing parameters
+depth:
+  min_depth: 0.3        # Minimum reliable depth (meters)
+  max_depth: 20.0       # Maximum reliable depth (meters)
+  confidence_threshold: 50  # Depth confidence threshold (0-100)
+
+# Point cloud parameters
+pointcloud:
+  max_points: 500000    # Maximum points to process
+  organized: true       # Whether point cloud is organized
+
+# TF frames
+frames:
+  camera_frame: "camera_link"
+  robot_base_frame: "panda_link0"
+  optical_frame: "zed2_left_camera_optical_frame"
+
+# Calibration data (hand-eye calibration)
+# Transform from panda_hand to camera_link
+hand_eye_calibration:
+  translation: [0.0, 0.0, 0.0]    # [x, y, z] in meters
+  rotation: [0.0, 0.0, 0.0, 1.0]  # quaternion [x, y, z, w]
+  
+  # Note: This should be replaced with actual calibration values
+  # Run hand-eye calibration to get accurate values
+  is_calibrated: false

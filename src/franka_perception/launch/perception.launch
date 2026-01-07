@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Franka Perception Node - Main Launch File -->
+  
+  <!-- Arguments -->
+  <arg name="sim_mode" default="true" doc="Use simulation mode (Gazebo topics)"/>
+  <arg name="target_color" default="red" doc="Target object color: red, blue, green, yellow"/>
+  <arg name="confidence_threshold" default="0.7" doc="Minimum confidence for color detection"/>
+  <arg name="publish_debug" default="false" doc="Publish debug visualization images"/>
+  <arg name="detection_rate" default="10.0" doc="Detection frequency in Hz"/>
+  
+  <!-- Topic remapping for different camera setups -->
+  <arg name="cloud_topic" default="/zed2/zed_node/point_cloud/cloud_registered" doc="Point cloud topic"/>
+  <arg name="rgb_topic" default="/zed2/zed_node/left/image_rect_color" doc="RGB image topic (use 'left' for sim, 'rgb' for real robot)"/>
+  
+  <!-- Load perception parameters -->
+  <rosparam command="load" file="$(find franka_perception)/config/detection_params.yaml" />
+  
+  <!-- Perception Node -->
+  <node 
+    name="perception_node" 
+    pkg="franka_perception" 
+    type="perception_node.py"
+    output="screen"
+    required="false">
+    
+    <!-- Core parameters -->
+    <param name="sim_mode" value="$(arg sim_mode)" />
+    <param name="target_color" value="$(arg target_color)" />
+    <param name="confidence_threshold" value="$(arg confidence_threshold)" />
+    <param name="publish_debug_image" value="$(arg publish_debug)" />
+    <param name="detection_rate" value="$(arg detection_rate)" />
+    
+    <!-- Topic configuration -->
+    <param name="cloud_topic" value="$(arg cloud_topic)" />
+    <param name="rgb_topic" value="$(arg rgb_topic)" />
+    
+    <!-- Point cloud processing parameters (loaded from YAML) -->
+    <!-- Can be overridden here if needed -->
+  </node>
+  
+  <!-- Optional: RViz for visualization -->
+  <node if="false"
+    name="perception_rviz" 
+    pkg="rviz" 
+    type="rviz"
+    args="-d $(find franka_perception)/rviz/perception.rviz"
+    output="screen"
+    required="false" />
+
+</launch>

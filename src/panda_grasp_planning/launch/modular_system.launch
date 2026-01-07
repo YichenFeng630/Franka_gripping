@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ================================================================ -->
+  <!-- Franka Gripping System - Modular Architecture Launch File        -->
+  <!-- ================================================================ -->
+  <!-- 
+    This launch file integrates all 4 modular packages:
+    1. franka_perception       - Vision & object detection
+    2. franka_grasp_generation - Grasp pose generation
+    3. franka_trajectory_planning - Motion planning & execution
+    4. franka_task_planning    - VLA decision making (optional)
+  -->
+
+  <!-- ==================== ARGUMENTS ==================== -->
+  <arg name="sim" default="true" doc="Use simulation (Gazebo) or real robot"/>
+  <arg name="rviz" default="false" doc="Launch RViz visualization"/>
+  <arg name="gazebo_gui" default="false" doc="Launch Gazebo GUI"/>
+  
+  <!-- Perception -->
+  <arg name="target_color" default="red" doc="Target object color"/>
+  <arg name="enable_perception" default="true" doc="Enable perception module"/>
+  
+  <!-- VLA -->
+  <arg name="enable_vla" default="false" doc="Enable VLA-based decision making"/>
+  <arg name="vla_model" default="openvla/openvla-7b-v1" doc="VLA model checkpoint"/>
+  
+  <!-- Execution -->
+  <arg name="enable_place_to_bin" default="true" doc="Enable place-to-bin execution"/>
+
+  <!-- ==================== FOUNDATION: GAZEBO + MOVEIT ==================== -->
+  <group if="$(arg sim)">
+    <include file="$(find franka_zed_gazebo)/launch/moveit_gazebo_panda.launch">
+      <arg name="gazebo_gui" value="$(arg gazebo_gui)" />
+      <arg name="paused" value="false" />
+    </include>
+  </group>
+
+  <!-- Real robot setup (TODO: implement) -->
+  <group unless="$(arg sim)">
+    <include file="$(find franka_zed_gazebo)/launch/real_robot_zed2.launch" />
+  </group>
+
+  <!-- ==================== MODULE 1: PERCEPTION ==================== -->
+  <group if="$(arg enable_perception)">
+    <include file="$(find franka_perception)/launch/perception.launch">
+      <arg name="sim_mode" value="$(arg sim)" />
+      <arg name="target_color" value="$(arg target_color)" />
+      <arg name="detection_rate" value="10.0" />
+    </include>
+  </group>
+
+  <!-- ==================== MODULE 2: GRASP GENERATION ==================== -->
+  <include file="$(find franka_grasp_generation)/launch/grasp_generation.launch">
+    <arg name="num_approaches" value="8" />
+    <arg name="yaw_samples" value="8" />
+  </include>
+
+  <!-- ==================== MODULE 3: TRAJECTORY PLANNING ==================== -->
+  <include file="$(find franka_trajectory_planning)/launch/trajectory_executor.launch">
+    <arg name="max_velocity" value="1.0" />
+    <arg name="enable_safety_checks" value="true" />
+  </include>
+
+  <!-- ==================== MODULE 4: TASK PLANNING (OPTIONAL) ==================== -->
+  <group if="$(arg enable_vla)">
+    <include file="$(find franka_task_planning)/launch/vla_planner.launch">
+      <arg name="model_checkpoint" value="$(arg vla_model)" />
+      <arg name="use_lora" value="false" />
+    </include>
+  </group>
+
+  <!-- If VLA is disabled, use simple sorting logic -->
+  <group unless="$(arg enable_vla)">
+    <include file="$(find franka_task_planning)/launch/sorting_only.launch" />
+  </group>
+
+  <!-- ==================== SYSTEM COORDINATOR ==================== -->
+  <!-- 
+    Lightweight coordinator that calls services from the 4 modules
+    to orchestrate complete pick-and-place tasks
+  -->
+  <node 
+    name="system_coordinator" 
+    pkg="panda_grasp_planning" 
+    type="system_coordinator.py"
+    output="screen"
+    required="true">
+    <param name="enable_place_to_bin" value="$(arg enable_place_to_bin)" />
+    <param name="use_vla_scoring" value="$(arg enable_vla)" />
+  </node>
+
+  <!-- ==================== VISUALIZATION ==================== -->
+  <group if="$(arg rviz)">
+    <node 
+      name="rviz" 
+      pkg="rviz" 
+      type="rviz"
+      args="-d $(find panda_grasp_planning)/rviz/modular_system.rviz"
+      output="screen"
+      required="false" />
+  </group>
+
+  <!-- ==================== MONITORING ==================== -->
+  <node 
+    name="status_monitor" 
+    pkg="panda_grasp_planning" 
+    type="status_monitor.py"
+    output="screen"
+    required="false">
+    <param name="publish_rate" value="1.0" />
+  </node>
+
+</launch>

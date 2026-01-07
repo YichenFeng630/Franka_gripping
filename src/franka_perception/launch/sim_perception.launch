@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simulation Mode Perception Launch File (Open3D Version) -->
+  
+  <!-- Arguments -->
+  <arg name="target_color" default="red" doc="Target object color: red, blue, green, yellow"/>
+  <arg name="enable_color_detection" default="false" doc="Enable color detection (set to true if needed)"/>
+  <arg name="confidence_threshold" default="0.3" doc="Minimum confidence for color detection"/>
+  <arg name="detection_rate" default="10.0" doc="Detection frequency in Hz"/>
+  <arg name="use_icp" default="true" doc="Use ICP for 6D pose estimation"/>
+  
+  <!-- Topic configuration for simulation (Gazebo uses 'left' namespace) -->
+  <arg name="cloud_topic" default="/zed2/zed_node/point_cloud/cloud_registered"/>
+  <arg name="rgb_topic" default="/zed2/zed_node/left/image_rect_color"/>
+  
+  <!-- Load perception parameters -->
+  <rosparam command="load" file="$(find franka_perception)/config/detection_params.yaml" />
+  
+  <!-- Perception Node in Simulation Mode -->
+  <node 
+    name="perception_node" 
+    pkg="franka_perception" 
+    type="perception_node.py"
+    output="screen"
+    required="false">
+    
+    <!-- Simulation mode enabled -->
+    <param name="sim_mode" value="true" />
+    
+    <!-- Detection parameters -->
+    <param name="target_color" value="$(arg target_color)" />
+    <param name="enable_color_detection" value="$(arg enable_color_detection)" />
+    <param name="confidence_threshold" value="$(arg confidence_threshold)" />
+    <param name="detection_rate" value="$(arg detection_rate)" />
+    <param name="use_icp" value="$(arg use_icp)" />
+    
+    <!-- World frame -->
+    <param name="world_frame" value="world" />
+    
+    <!-- Cube parameters -->
+    <param name="cube_edge_len" value="0.045" />  <!-- 4.5cm cubes -->
+    <param name="cube_diagonal" value="0.0389" />
+    <param name="max_cubes" value="30" />
+    
+    <!-- Point cloud processing parameters (simulation optimized) -->
+    <param name="voxel_size" value="0.001" />  <!-- 1mm for sim -->
+    <param name="dbscan_eps" value="0.015" />  <!-- 1.5cm -->
+    <param name="dbscan_min_points" value="20" />
+    <param name="ransac_dist" value="0.01" />  <!-- 1cm -->
+    <param name="icp_min_points" value="100" />
+    
+    <!-- Workspace bounds (world frame) -->
+    <rosparam param="boundX">[-1.0, 1.0]</rosparam>
+    <rosparam param="boundY">[-1.0, 1.0]</rosparam>
+    <rosparam param="boundZ">[-1.0, 1.0]</rosparam>
+    
+    <!-- Topic configuration -->
+    <param name="cloud_topic" value="$(arg cloud_topic)" />
+    <param name="rgb_topic" value="$(arg rgb_topic)" />
+    
+  </node>
+
+  <!-- Info message -->
+  <node name="sim_info" pkg="rostopic" type="rostopic" 
+        args="pub -1 /sim_perception_started std_msgs/String &quot;data: 'Perception (Open3D) started for color: $(arg target_color)'&quot;" 
+        output="screen"/>
+
+</launch>

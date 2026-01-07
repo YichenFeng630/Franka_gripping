@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ZED2 Perception for Target Detection -->
+  <!-- Processes RGB-D data to detect and locate target objects -->
+  
+  <arg name="sim" default="true" doc="Use simulation topics instead of real ZED2"/>
+  <arg name="target_color" default="red" doc="Target object color (red/blue/green)"/>
+  <arg name="voxel_size" default="0.005" doc="Voxel grid downsampling size (m)"/>
+  <arg name="dbscan_eps" default="0.02" doc="DBSCAN clustering distance (m)"/>
+  <arg name="ransac_distance_threshold" default="0.01" doc="RANSAC plane detection threshold (m)"/>
+  
+  <!-- Topic remapping for simulation vs real robot -->
+  <arg name="depth_topic" default="/zed2/depth/depth_registered" unless="$(arg sim)"/>
+  <arg name="depth_topic" default="/camera/depth/image_raw" if="$(arg sim)"/>
+  
+  <arg name="rgb_topic" default="/zed2/rgb/image_rect_color" unless="$(arg sim)"/>
+  <arg name="rgb_topic" default="/camera/rgb/image_raw" if="$(arg sim)"/>
+  
+  <arg name="camera_info_topic" default="/zed2/rgb/camera_info" unless="$(arg sim)"/>
+  <arg name="camera_info_topic" default="/camera/rgb/camera_info" if="$(arg sim)"/>
+  
+  <arg name="point_cloud_topic" default="/zed2/point_cloud/cloud_registered" unless="$(arg sim)"/>
+  <arg name="point_cloud_topic" default="/camera/depth/points" if="$(arg sim)"/>
+
+  <!-- Perception Node -->
+  <node 
+    name="perception_node" 
+    pkg="panda_grasp_planning" 
+    type="perception_node.py"
+    output="screen"
+    required="false">
+    
+    <!-- Target configuration -->
+    <param name="target_color" value="$(arg target_color)" />
+    <param name="sim_mode" value="$(arg sim)" />
+    
+    <!-- Processing parameters -->
+    <param name="voxel_size" value="$(arg voxel_size)" />
+    <param name="dbscan_eps" value="$(arg dbscan_eps)" />
+    <param name="ransac_distance_threshold" value="$(arg ransac_distance_threshold)" />
+    
+    <!-- Topic remappings -->
+    <remap from="~depth_image" to="$(arg depth_topic)" />
+    <remap from="~rgb_image" to="$(arg rgb_topic)" />
+    <remap from="~camera_info" to="$(arg camera_info_topic)" />
+    <remap from="~point_cloud" to="$(arg point_cloud_topic)" />
+    
+    <!-- Output topics -->
+    <remap from="~detected_objects" to="/detected_objects" />
+    <remap from="~target_cube_pose" to="/target_cube_pose" />
+    <remap from="~debug_pointcloud" to="/perception/debug_pointcloud" />
+  </node>
+
+  <!-- Optional: Static transform for camera (if not provided by URDF) -->
+  <!-- This is commented out because camera TF should come from robot_state_publisher -->
+  <!-- If you need it, uncomment and adjust values -->
+  <!--
+  <node pkg="tf2_ros" type="static_transform_publisher" name="camera_base_link_broadcaster"
+    args="0.05 0 0.05 0 0 0 panda_hand camera_link" />
+  -->
+
+</launch>
