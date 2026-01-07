@@ -38,6 +38,7 @@ import tf2_geometry_msgs
 import open3d as o3d
 import matplotlib.pyplot as plt
 from pc_helper import *
+from pc_advanced import smart_plane_removal, height_bandpass_filter, validate_icp_result
 
 
 class PerceptionNode:
@@ -212,16 +213,31 @@ class PerceptionNode:
             
             rospy.loginfo_throttle(10.0, f"After cropping: {len(np.asarray(cropped_pc.points))} points")
             
-            # 4. RANSAC plane segmentation (remove table if Z starts below 0)
+            # 4. RANSAC plane segmentation (remove table) + Height bandpass filter
             if self.boundZ[0] <= 0:
-                outlier_cloud = segment_pc(cropped_pc, self.ransac_dist_threshold)
+                # 智能平面去除 + 高度带通滤波
+                outlier_cloud, plane_model = smart_plane_removal(
+                    cropped_pc, 
+                    self.ransac_dist_threshold,
+                    plane_z_buffer=0.005
+                )
+                
+                # 应用高度带通滤波
+                if plane_model is not None:
+                    outlier_cloud = height_bandpass_filter(
+                        outlier_cloud,
+                        plane_model,
+                        cube_height=self.cube_edge_len,
+                        buffer=0.005
+                    )
+                
                 if outlier_cloud.is_empty():
-                    rospy.loginfo_throttle(5.0, "No objects after plane removal")
+                    rospy.loginfo_throttle(5.0, "No objects after plane removal and height filtering")
                     return
             else:
                 outlier_cloud = cropped_pc
             
-            rospy.loginfo_throttle(10.0, f"After RANSAC: {len(np.asarray(outlier_cloud.points))} object points")
+            rospy.loginfo_throttle(10.0, f"After RANSAC + height filter: {len(np.asarray(outlier_cloud.points))} object points")
             
             # 5. DBSCAN clustering
             labels = cluster_pc(outlier_cloud, self.dbscan_eps, self.dbscan_min_points)
@@ -300,6 +316,12 @@ class PerceptionNode:
     def process_cluster_with_icp(self, cluster, cube_count, header):
         """
         Process a cluster using ICP registration to detect individual cubes.
+        
+        关键改进：
+        1. 严格的ICP质量检查（不再盲目相信fitness=1.0）
+        2. 综合使用fitness和RMSE指标
+        3. 只接受high-quality的检测结果
+        
         Args:
             cluster (open3d.geometry.PointCloud): cluster point cloud
             cube_count (int): current cube count
@@ -329,6 +351,21 @@ class PerceptionNode:
                     self.cube_gt, cluster, 1.0, init_transform,
                     o3d.pipelines.registration.TransformationEstimationPointToPoint()
                 )
+                
+                # 【新增】严格的质量检查 - 不再盲目相信fitness=1.0
+                is_valid, quality_score, fail_reasons = validate_icp_result(
+                    reg_p2p,
+                    min_fitness=0.5,
+                    max_rmse=0.015  # 15mm RMSE 阈值
+                )
+                
+                if not is_valid:
+                    rospy.logwarn(
+                        f"ICP result rejected: {fail_reasons}, "
+                        f"fitness={reg_p2p.fitness:.3f}, "
+                        f"rmse={reg_p2p.inlier_rmse:.4f}"
+                    )
+                    break  # 质量差，停止继续寻找cube
                 
                 # Extract position and orientation from transformation matrix
                 raw_pos = [
@@ -361,13 +398,15 @@ class PerceptionNode:
                     cluster_points = np.asarray(cluster.points)
                     color, confidence = color_detection_from_points(cluster_points, self.current_rgb)
                 
-                # Create object dict
+                # Create object dict with quality score
                 obj = {
                     'id': cube_count,
                     'color': color,
                     'position': raw_pos,
                     'confidence': confidence,
                     'fitness': reg_p2p.fitness,
+                    'rmse': reg_p2p.inlier_rmse,
+                    'quality_score': quality_score,  # 新增：综合质量分数
                     'num_points': len(np.asarray(cluster.points))
                 }
                 detected_cubes.append(obj)
@@ -375,10 +414,11 @@ class PerceptionNode:
                 # Publish odometry
                 self.publish_odometry(raw_pos, quat, self.world_frame, cube_count)
                 
-                # Log detection
+                # Log detection with quality metrics
                 euler = rotation_matrix_to_euler_angles(rotation)
                 log_msg = f"Cube {cube_count}: pos=[{raw_pos[0]:.3f}, {raw_pos[1]:.3f}, {raw_pos[2]:.3f}], "
-                log_msg += f"euler=[{euler[0]:.3f}, {euler[1]:.3f}, {euler[2]:.3f}], fitness={reg_p2p.fitness:.3f}"
+                log_msg += f"fitness={reg_p2p.fitness:.3f}, rmse={reg_p2p.inlier_rmse:.4f}, "
+                log_msg += f"quality={quality_score:.3f}"
                 if self.enable_color_detection:
                     log_msg += f", color={color}({confidence:.2f})"
                 rospy.loginfo(log_msg)
