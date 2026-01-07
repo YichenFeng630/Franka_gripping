@@ -1,16 +1,16 @@
 # Detection Parameters for Franka Perception
 
 # Point Cloud Processing
-voxel_size: 0.005              # Voxel grid size for downsampling (meters)
+voxel_size: 0.004              # Voxel grid size for downsampling (meters) - OPTIMIZED: 0.005 -> 0.004
 z_min: -0.8                     # Minimum Z coordinate relative to camera (meters) - camera looks down
 z_max: 0.3                      # Maximum Z coordinate relative to camera (meters)
 
 # RANSAC Plane Removal (Table Surface)
-ransac_dist: 0.01               # Distance threshold for RANSAC inliers (meters)
+ransac_dist: 0.015              # Distance threshold for RANSAC inliers (meters) - OPTIMIZED: 0.01 -> 0.015
 ransac_iterations: 100          # Number of RANSAC iterations
 
 # DBSCAN Clustering
-dbscan_eps: 0.02                # DBSCAN epsilon (cluster radius in meters)
+dbscan_eps: 0.025                # DBSCAN epsilon (cluster radius in meters) - OPTIMIZED: 0.02 -> 0.025
 dbscan_min_samples: 50          # Minimum points per cluster
 
 # Temporal Smoothing
